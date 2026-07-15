@@ -29,11 +29,11 @@ pub struct ModelStore {
 
 impl ModelStore {
     /// Every model, with whether it is on disk.
-    pub fn list(&self, paths: &AppPaths) -> Vec<InstalledModel> {
+    pub fn list(&self, paths: &AppPaths, language: audis_common::Language) -> Vec<InstalledModel> {
         ModelId::ALL
             .iter()
             .map(|id| {
-                let info = id.info();
+                let info = id.info(language);
                 let path = paths.models_dir().join(&info.file_name);
                 let installed_bytes = std::fs::metadata(&path).ok().map(|meta| meta.len());
 
@@ -113,9 +113,9 @@ impl ModelStore {
     }
 
     async fn download(&self, app: &AppHandle, paths: &AppPaths, id: ModelId) -> Result<()> {
-        let info = id.info();
+        let file_name = id.file_name();
         let models_dir = paths.models_dir();
-        let destination = models_dir.join(&info.file_name);
+        let destination = models_dir.join(file_name);
 
         std::fs::create_dir_all(&models_dir).map_err(|source| AudisError::Io {
             path: models_dir.clone(),
@@ -125,14 +125,13 @@ impl ModelStore {
 
         // Staged in the models folder rather than the temp folder, so the
         // rename below stays on one volume and therefore stays atomic.
-        let staging = models_dir.join(format!("{}.partial", info.file_name));
+        let staging = models_dir.join(format!("{file_name}.partial"));
 
-        let response =
-            reqwest::get(&info.url)
-                .await
-                .map_err(|error| AudisError::Configuration {
-                    detail: format!("could not reach the model host: {error}"),
-                })?;
+        let response = reqwest::get(id.url())
+            .await
+            .map_err(|error| AudisError::Configuration {
+                detail: format!("could not reach the model host: {error}"),
+            })?;
 
         if !response.status().is_success() {
             return Err(AudisError::Configuration {
@@ -269,7 +268,7 @@ mod tests {
         let (_guard, paths) = temp_paths();
         let store = ModelStore::default();
 
-        let listed = store.list(&paths);
+        let listed = store.list(&paths, audis_common::Language::English);
 
         assert_eq!(listed.len(), ModelId::ALL.len());
         assert!(listed.iter().all(|model| !model.installed));
@@ -291,7 +290,7 @@ mod tests {
         .expect("write model");
 
         let base = store
-            .list(&paths)
+            .list(&paths, audis_common::Language::English)
             .into_iter()
             .find(|model| model.info.id == ModelId::WhisperBase)
             .expect("base in catalogue");
@@ -318,7 +317,7 @@ mod tests {
         .expect("write empty");
 
         let tiny = store
-            .list(&paths)
+            .list(&paths, audis_common::Language::English)
             .into_iter()
             .find(|model| model.info.id == ModelId::WhisperTiny)
             .expect("tiny in catalogue");

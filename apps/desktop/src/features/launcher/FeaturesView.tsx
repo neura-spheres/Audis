@@ -4,6 +4,7 @@ import { ErrorNotice } from "@/components/ErrorNotice";
 import { Button } from "@/components/controls";
 import { CheckIcon } from "@/components/icons";
 import { listFeatures, AudisIpcError } from "@/services/ipc";
+import { useSession } from "@/hooks/useSession";
 import type { Feature, UserFacingError } from "@/schemas/ipc";
 import type { ViewId } from "@/app/navigation";
 
@@ -18,6 +19,7 @@ import type { ViewId } from "@/app/navigation";
 export function FeaturesView({ onNavigate }: { onNavigate: (id: ViewId) => void }) {
   const [features, setFeatures] = useState<Feature[]>();
   const [error, setError] = useState<UserFacingError>();
+  const { session, starting, error: sessionError, start, stop } = useSession();
 
   const refresh = useCallback(() => {
     listFeatures()
@@ -34,14 +36,26 @@ export function FeaturesView({ onNavigate }: { onNavigate: (id: ViewId) => void 
 
   return (
     <div className="flex flex-col gap-5">
+      {sessionError ? <ErrorNotice error={sessionError} /> : null}
+
       <p className="px-1 text-subheadline" style={{ color: "var(--label-secondary)" }}>
-        Pick what you want Audis to do. Starting a feature hides this window and leaves a small
-        controller on screen.
+        Pick what you want Audis to do. Captions appear over your other windows while a session
+        runs.
       </p>
 
       <div className="flex flex-col gap-3">
         {(features ?? []).map((feature) => (
-          <FeatureCard key={feature.id} feature={feature} onNavigate={onNavigate} />
+          <FeatureCard
+            key={feature.id}
+            feature={feature}
+            onNavigate={onNavigate}
+            running={session?.mode === feature.id}
+            // One session at a time: two would fight over the microphone.
+            blockedByOther={session !== null && session.mode !== feature.id}
+            starting={starting}
+            onStart={() => void start(feature.id)}
+            onStop={() => void stop()}
+          />
         ))}
       </div>
 
@@ -57,9 +71,19 @@ export function FeaturesView({ onNavigate }: { onNavigate: (id: ViewId) => void 
 function FeatureCard({
   feature,
   onNavigate,
+  running,
+  blockedByOther,
+  starting,
+  onStart,
+  onStop,
 }: {
   feature: Feature;
   onNavigate: (id: ViewId) => void;
+  running: boolean;
+  blockedByOther: boolean;
+  starting: boolean;
+  onStart: () => void;
+  onStop: () => void;
 }) {
   const ready = feature.status === "ready";
 
@@ -135,19 +159,44 @@ function FeatureCard({
       ) : null}
 
       <div className="flex items-center gap-3">
-        <Button
-          variant={ready ? "accent" : "standard"}
-          disabled={!ready}
-          onClick={() => onNavigate("features")}
-          // The tooltip explains why it is disabled, but the accessible name
-          // must stay the action itself, or a screen reader announces the
-          // blocker text as the button's name.
-          title={ready ? `Start ${feature.name}` : (feature.blocker ?? "Not available yet")}
-          ariaLabel={`Start ${feature.name}`}
-        >
-          Start {feature.name}
-        </Button>
-        {!ready ? (
+        {running ? (
+          <Button variant="danger" onClick={onStop} ariaLabel={`Stop ${feature.name}`}>
+            Stop {feature.name}
+          </Button>
+        ) : (
+          <Button
+            variant={ready ? "accent" : "standard"}
+            disabled={!ready || starting || blockedByOther}
+            onClick={onStart}
+            // The tooltip explains why it is disabled, but the accessible name
+            // must stay the action itself, or a screen reader announces the
+            // blocker text as the button's name.
+            title={
+              blockedByOther
+                ? "Stop the running session first."
+                : ready
+                  ? `Start ${feature.name}`
+                  : (feature.blocker ?? "Not available yet")
+            }
+            ariaLabel={`Start ${feature.name}`}
+          >
+            {starting ? "Starting…" : `Start ${feature.name}`}
+          </Button>
+        )}
+
+        {running ? (
+          <span className="text-footnote" style={{ color: "var(--color-success)" }}>
+            Running now
+          </span>
+        ) : starting ? (
+          <span className="text-footnote" style={{ color: "var(--label-tertiary)" }}>
+            Loading the speech model. This takes a few seconds the first time.
+          </span>
+        ) : blockedByOther ? (
+          <span className="text-footnote" style={{ color: "var(--label-tertiary)" }}>
+            Another session is running
+          </span>
+        ) : !ready ? (
           <span className="text-footnote" style={{ color: "var(--label-tertiary)" }}>
             Not ready yet
           </span>

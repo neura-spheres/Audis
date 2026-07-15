@@ -1,3 +1,5 @@
+import type { InvokeArgs } from "@tauri-apps/api/core";
+
 import type {
   AppInfo,
   DataFileListing,
@@ -105,6 +107,7 @@ export const AUDIS_MODELS_MOCK: InstalledModel[] = [
       url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
       requirement: "Runs comfortably on any modern PC.",
       recommended: true,
+      keepsUpLive: true,
     },
     installed: false,
     installedBytes: null,
@@ -122,6 +125,13 @@ export const AUDIS_PROVIDERS_MOCK: ProviderStatus[] = [
       defaultModel: "gemini-2.0-flash",
       models: ["gemini-2.0-flash", "gemini-2.0-flash-lite"],
       needsEndpoint: false,
+      speech: {
+        api: "geminiInline",
+        baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+        defaultModel: "gemini-2.0-flash",
+        models: ["gemini-2.0-flash"],
+        summary: "Free tier. Good at Indonesian.",
+      },
     },
     hasKey: false,
     enabled: false,
@@ -129,3 +139,26 @@ export const AUDIS_PROVIDERS_MOCK: ProviderStatus[] = [
     endpoint: null,
   },
 ];
+
+/**
+ * Wrap an IPC handler so event subscriptions and session polling succeed.
+ *
+ * Any component using `subscribe` or `useSession` calls `plugin:event|listen`
+ * and `get_session_status`. A test that only mocks its own commands would see
+ * those as unexpected and reject, which surfaces as an unhandled rejection
+ * rather than a clear failure. This handles the ambient calls so a test only
+ * declares what it actually cares about.
+ */
+export function withAmbientIpc(
+  handler: (command: string, args?: InvokeArgs) => unknown,
+): (command: string, args?: InvokeArgs) => unknown {
+  return (command, args) => {
+    // Tauri's event plugin. Returning an id is enough; nothing unsubscribes in
+    // a test that has already finished.
+    if (command === "plugin:event|listen") return 1;
+    if (command === "plugin:event|unlisten") return null;
+    if (command === "get_session_status") return null;
+
+    return handler(command, args);
+  };
+}

@@ -10,6 +10,7 @@ import {
   featureSchema,
   installedModelSchema,
   providerStatusSchema,
+  sessionStatusSchema,
   settingsSchema,
   userFacingErrorSchema,
   type AppInfo,
@@ -21,7 +22,9 @@ import {
   type InstalledModel,
   type ModelId,
   type ProviderId,
+  type FeatureId,
   type ProviderStatus,
+  type SessionStatus,
   type Settings,
   type UserFacingError,
 } from "@/schemas/ipc";
@@ -227,4 +230,29 @@ export function updateProvider(
   endpoint: string | null,
 ): Promise<void> {
   return callCommand("update_provider", voidResult, { id, enabled, model, endpoint });
+}
+
+/**
+ * Start a live session for `feature`.
+ *
+ * Resolves when capture is running, which includes loading the model, so this
+ * can take a few seconds on first start.
+ */
+export function startSession(feature: FeatureId): Promise<SessionStatus> {
+  return callCommand("start_session", sessionStatusSchema, { feature });
+}
+
+/** Stop the running session and release every device. */
+export function stopSession(): Promise<SessionStatus> {
+  return callCommand("stop_session", sessionStatusSchema);
+}
+
+/** Pause or resume. Devices stay open while paused, so resuming is instant. */
+export function setSessionPaused(paused: boolean): Promise<SessionStatus> {
+  return callCommand("set_session_paused", sessionStatusSchema, { paused });
+}
+
+/** The running session, if there is one. */
+export function getSessionStatus(): Promise<SessionStatus | null> {
+  return callCommand("get_session_status", sessionStatusSchema.nullable());
 }

@@ -57,6 +57,13 @@ pub mod events {
     /// Progress while a speech model downloads.
     pub const MODEL_PROGRESS: &str = "audis://model/progress";
 
+    /// Settings were saved. Carries the whole `Settings`.
+    ///
+    /// Settings are edited in the main window but also drive the caption
+    /// overlay, which is a separate window with its own copy. Without this it
+    /// keeps whatever it read at startup and the controls appear to do nothing.
+    pub const SETTINGS_CHANGED: &str = "audis://settings/changed";
+
     /// Every event this build can emit.
     pub const ALL: &[&str] = &[
         SESSION_STATE,
@@ -73,6 +80,7 @@ pub mod events {
         UPDATE_STATUS,
         DIAGNOSTIC_WARNING,
         MODEL_PROGRESS,
+        SETTINGS_CHANGED,
     ];
 }
 

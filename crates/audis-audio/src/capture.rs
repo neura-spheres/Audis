@@ -71,9 +71,22 @@ impl std::fmt::Debug for CaptureHandle {
     }
 }
 
-/// Start capturing from a microphone.
+/// Receives captured audio as interleaved `f32` frames in the device's native
+/// rate and channel count.
+///
+/// Called on the real-time audio thread. It must never block, wait on a lock,
+/// or panic: doing so glitches capture for the whole system, not just Audis.
+/// Hand the frames to another thread and return.
+pub type FrameSink = Arc<dyn Fn(&[f32]) + Send + Sync>;
+
+/// Start capturing from a microphone, for levels only.
 pub fn start_microphone(device_id: Option<&str>) -> Result<CaptureHandle> {
-    start(AudioSourceKind::Microphone, DeviceKind::Input, device_id)
+    start(
+        AudioSourceKind::Microphone,
+        DeviceKind::Input,
+        device_id,
+        None,
+    )
 }
 
 /// Start capturing what the computer is playing, via WASAPI loopback.
@@ -85,6 +98,33 @@ pub fn start_computer_audio(device_id: Option<&str>) -> Result<CaptureHandle> {
         AudioSourceKind::ComputerAudio,
         DeviceKind::Output,
         device_id,
+        None,
+    )
+}
+
+/// Start microphone capture and deliver every frame to `sink`.
+pub fn start_microphone_with_sink(
+    device_id: Option<&str>,
+    sink: FrameSink,
+) -> Result<CaptureHandle> {
+    start(
+        AudioSourceKind::Microphone,
+        DeviceKind::Input,
+        device_id,
+        Some(sink),
+    )
+}
+
+/// Start loopback capture and deliver every frame to `sink`.
+pub fn start_computer_audio_with_sink(
+    device_id: Option<&str>,
+    sink: FrameSink,
+) -> Result<CaptureHandle> {
+    start(
+        AudioSourceKind::ComputerAudio,
+        DeviceKind::Output,
+        device_id,
+        Some(sink),
     )
 }
 
@@ -92,6 +132,7 @@ fn start(
     source: AudioSourceKind,
     kind: DeviceKind,
     device_id: Option<&str>,
+    sink: Option<FrameSink>,
 ) -> Result<CaptureHandle> {
     let device = device::find(kind, device_id)?;
     let device_name = device::display_name(&device);
@@ -116,21 +157,19 @@ fn start(
     // instead of returning a handle to a stream that never opened.
     let (ready_tx, ready_rx) = channel::<Result<()>>();
 
-    let thread_meter = Arc::clone(&meter);
-    let thread_name = device_name.clone();
+    let setup = StreamSetup {
+        device,
+        device_name: device_name.clone(),
+        config: stream_config,
+        sample_format,
+        meter: Arc::clone(&meter),
+        sink,
+    };
 
     std::thread::Builder::new()
         .name(format!("audis-capture-{source:?}"))
         .spawn(move || {
-            capture_thread(
-                device,
-                thread_name,
-                stream_config,
-                sample_format,
-                thread_meter,
-                ready_tx,
-                stop_rx,
-            );
+            capture_thread(setup, ready_tx, stop_rx);
         })
         .map_err(|error| AudioError::StreamStart {
             device: device_name.clone(),
@@ -160,20 +199,24 @@ fn start(
     })
 }
 
-/// Owns the cpal stream for its lifetime.
-///
-/// The stream is `!Send`, so it is built here and never moved. The thread then
-/// blocks until the handle drops and the channel closes.
-fn capture_thread(
+/// Everything needed to open one stream, moved to the capture thread as a unit.
+struct StreamSetup {
     device: cpal::Device,
     device_name: String,
     config: cpal::StreamConfig,
     sample_format: cpal::SampleFormat,
     meter: Arc<LevelMeter>,
-    ready: Sender<Result<()>>,
-    stop: Receiver<()>,
-) {
-    let stream = match build_stream(&device, &device_name, config, sample_format, meter) {
+    sink: Option<FrameSink>,
+}
+
+/// Owns the cpal stream for its lifetime.
+///
+/// The stream is `!Send`, so it is built here and never moved. The thread then
+/// blocks until the handle drops and the channel closes.
+fn capture_thread(setup: StreamSetup, ready: Sender<Result<()>>, stop: Receiver<()>) {
+    let device_name = setup.device_name.clone();
+
+    let stream = match build_stream(setup) {
         Ok(stream) => stream,
         Err(error) => {
             let _ = ready.send(Err(error));
@@ -197,14 +240,17 @@ fn capture_thread(
     tracing::debug!(device = %device_name, "capture stopped");
 }
 
-fn build_stream(
-    device: &cpal::Device,
-    device_name: &str,
-    config: cpal::StreamConfig,
-    sample_format: cpal::SampleFormat,
-    meter: Arc<LevelMeter>,
-) -> Result<cpal::Stream> {
-    let error_name = device_name.to_owned();
+fn build_stream(setup: StreamSetup) -> Result<cpal::Stream> {
+    let StreamSetup {
+        device,
+        device_name,
+        config,
+        sample_format,
+        meter,
+        sink,
+    } = setup;
+
+    let error_name = device_name.clone();
     let on_error = move |error: cpal::Error| {
         // Never panic from the audio thread. A headset being unplugged
         // mid-stream is normal and the session should survive it.
@@ -212,7 +258,7 @@ fn build_stream(
     };
 
     let map_err = |error: cpal::Error| AudioError::StreamStart {
-        device: device_name.to_owned(),
+        device: device_name.clone(),
         detail: error.to_string(),
     };
 
@@ -222,7 +268,12 @@ fn build_stream(
         cpal::SampleFormat::F32 => device
             .build_input_stream(
                 config,
-                move |data: &[f32], _| meter.observe(data),
+                move |data: &[f32], _| {
+                    meter.observe(data);
+                    if let Some(sink) = &sink {
+                        sink(data);
+                    }
+                },
                 on_error,
                 None,
             )
@@ -240,6 +291,9 @@ fn build_stream(
                             *slot = f32::from(sample) / f32::from(i16::MAX);
                         }
                         meter.observe(&scratch[..chunk.len()]);
+                        if let Some(sink) = &sink {
+                            sink(&scratch[..chunk.len()]);
+                        }
                     }
                 },
                 on_error,
@@ -257,6 +311,9 @@ fn build_stream(
                             *slot = (f32::from(sample) / f32::from(u16::MAX)) * 2.0 - 1.0;
                         }
                         meter.observe(&scratch[..chunk.len()]);
+                        if let Some(sink) = &sink {
+                            sink(&scratch[..chunk.len()]);
+                        }
                     }
                 },
                 on_error,
@@ -266,7 +323,7 @@ fn build_stream(
 
         other => {
             return Err(AudioError::Format {
-                device: device_name.to_owned(),
+                device: device_name,
                 detail: format!("unsupported sample format {other:?}"),
             });
         }

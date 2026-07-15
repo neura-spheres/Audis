@@ -24,6 +24,22 @@
         "decorations": true,
         "visible": false,
         "dragDropEnabled": false
+      },
+      {
+        "label": "captions",
+        "title": "Audis Captions",
+        "url": "index.html?window=captions",
+        "width": 900,
+        "height": 180,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "resizable": true,
+        "focus": false,
+        "visible": false,
+        "dragDropEnabled": false
       }
     ],
     "security": {

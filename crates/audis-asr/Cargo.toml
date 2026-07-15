@@ -12,6 +12,7 @@ publish.workspace = true
 audis-common.workspace = true
 
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 uuid.workspace = true
@@ -20,6 +21,17 @@ uuid.workspace = true
 # toolchain; the app degrades to "no local engine" rather than failing to
 # compile. See ADR-011.
 whisper-rs = { version = "0.16", optional = true }
+
+# The cloud engines. Blocking on purpose: `AsrEngine::transcribe` is sync and
+# runs on a dedicated worker thread, so there is no runtime to block and no
+# reason to colour the trait async for one implementation.
+reqwest = { version = "0.13.4", features = [
+  "blocking",
+  "multipart",
+  "json",
+  "rustls",
+], default-features = false }
+base64 = "0.22"
 
 [dev-dependencies]
 serde_json.workspace = true

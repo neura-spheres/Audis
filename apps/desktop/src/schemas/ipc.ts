@@ -60,9 +60,73 @@ export const generalSettingsSchema = z.object({
   showTrayIcon: z.boolean(),
 });
 
+export const audioSettingsSchema = z.object({
+  microphoneId: z.string().nullable(),
+  computerAudioId: z.string().nullable(),
+});
+
+/** Mirrors `TranscriptionEngine`. The one setting that decides where audio goes. */
+export const transcriptionEngineSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("local"),
+    model: z.enum(["whisperTiny", "whisperBase", "whisperSmall", "whisperMedium"]),
+  }),
+  z.object({
+    kind: z.literal("cloud"),
+    provider: z.enum(["gemini", "deepSeek", "groq", "anthropic", "openAiCompatible"]),
+    model: z.string(),
+  }),
+]);
+
+export const transcriptionSettingsSchema = z.object({
+  engine: transcriptionEngineSchema,
+  model: z.enum(["whisperTiny", "whisperBase", "whisperSmall", "whisperMedium"]),
+  language: z.enum(["indonesian", "english"]),
+  captureMicrophone: z.boolean(),
+  captureComputerAudio: z.boolean(),
+});
+
+export const captionSettingsSchema = z.object({
+  fontSize: z.number().int().positive(),
+  maxLines: z.number().int().positive(),
+  backgroundOpacity: z.number().int().min(0).max(100),
+  showSourceLabels: z.boolean(),
+  clickThrough: z.boolean(),
+});
+
+export const shortcutSettingsSchema = z.object({
+  stopSession: z.string().nullable(),
+  togglePause: z.string().nullable(),
+  toggleCaptions: z.string().nullable(),
+  askAssistant: z.string().nullable(),
+});
+
+/** Mirrors `ProviderConfig`. Holds a credential reference, never a key. */
+export const providerConfigSchema = z.object({
+  id: z.enum(["gemini", "deepSeek", "groq", "anthropic", "openAiCompatible"]),
+  enabled: z.boolean(),
+  model: z.string(),
+  endpoint: z.string().nullable(),
+  credentialRef: z.string(),
+});
+
+/**
+ * Every field of Rust's `Settings` must appear here.
+ *
+ * `useSettings` sends the whole parsed object back on any change, and zod
+ * strips keys it does not know about. A field missing here would therefore be
+ * dropped on the way out and reset to its default by serde on the way in, so an
+ * unrelated theme toggle would silently wipe the user's model choice and
+ * provider list.
+ */
 export const settingsSchema = z.object({
   version: z.number().int(),
   general: generalSettingsSchema,
+  audio: audioSettingsSchema,
+  transcription: transcriptionSettingsSchema,
+  captions: captionSettingsSchema,
+  shortcuts: shortcutSettingsSchema,
+  providers: z.array(providerConfigSchema),
 });
 
 /** Mirrors `DataCategory`. */
@@ -188,6 +252,7 @@ export const modelInfoSchema = z.object({
   url: z.string().min(1),
   requirement: z.string(),
   recommended: z.boolean(),
+  keepsUpLive: z.boolean(),
 });
 
 /** Mirrors `InstalledModel`. */
@@ -216,6 +281,15 @@ export const providerIdSchema = z.enum([
 ]);
 
 /** Mirrors `ProviderInfo`. */
+/** Mirrors `SpeechSupport`. Absent when a provider cannot transcribe at all. */
+export const speechSupportSchema = z.object({
+  api: z.enum(["openAiTranscriptions", "geminiInline"]),
+  baseUrl: z.string().nullable(),
+  defaultModel: z.string(),
+  models: z.array(z.string()),
+  summary: z.string(),
+});
+
 export const providerInfoSchema = z.object({
   id: providerIdSchema,
   name: z.string().min(1),
@@ -225,6 +299,7 @@ export const providerInfoSchema = z.object({
   defaultModel: z.string(),
   models: z.array(z.string()),
   needsEndpoint: z.boolean(),
+  speech: speechSupportSchema.nullable(),
 });
 
 /**
@@ -274,6 +349,70 @@ export type FeatureId = z.infer<typeof featureIdSchema>;
 export type FeatureStatus = z.infer<typeof featureStatusSchema>;
 export type Feature = z.infer<typeof featureSchema>;
 
+/** Mirrors `SessionState`. */
+export const sessionStateSchema = z.enum([
+  "idle",
+  "starting",
+  "listening",
+  "paused",
+  "stopping",
+  "completed",
+  "failed",
+]);
+
+/** Mirrors `SessionStatus`, carried on `audis://session/state`. */
+export const sessionStatusSchema = z.object({
+  id: z.string(),
+  mode: featureIdSchema,
+  state: sessionStateSchema,
+  language: languageSchema,
+  elapsedMs: z.number().int().nonnegative(),
+  microphone: z.boolean(),
+  computerAudio: z.boolean(),
+  captionsVisible: z.boolean(),
+  assistantEnabled: z.boolean(),
+  error: z.string().nullable(),
+});
+
+/** Mirrors `TranscriptSegment`, carried on `audis://transcript/final`. */
+export const transcriptSegmentSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  source: audioSourceKindSchema,
+  speaker: z.string().nullable(),
+  startMs: z.number().int(),
+  endMs: z.number().int(),
+  text: z.string(),
+  language: languageSchema,
+  confidence: z.number().nullable(),
+  isFinal: z.boolean(),
+  engine: z.string(),
+});
+
+/** Mirrors `AsrState`. */
+export const asrStateSchema = z.enum([
+  "starting",
+  "listening",
+  "recognising",
+  "reconnecting",
+  "stopped",
+  "failed",
+]);
+
+/** Mirrors `AsrStatus`, carried on `audis://asr/status`. */
+export const asrStatusSchema = z.object({
+  source: audioSourceKindSchema,
+  state: asrStateSchema,
+  engine: z.string(),
+  error: z.string().nullable(),
+});
+
+export type SessionState = z.infer<typeof sessionStateSchema>;
+export type SessionStatus = z.infer<typeof sessionStatusSchema>;
+export type TranscriptSegment = z.infer<typeof transcriptSegmentSchema>;
+export type AsrState = z.infer<typeof asrStateSchema>;
+export type AsrStatus = z.infer<typeof asrStatusSchema>;
+
 export type DiagnosticCode = z.infer<typeof diagnosticCodeSchema>;
 export type UserFacingError = z.infer<typeof userFacingErrorSchema>;
 export type AudioSourceKind = z.infer<typeof audioSourceKindSchema>;
@@ -283,6 +422,13 @@ export type ThemePreference = z.infer<typeof themePreferenceSchema>;
 export type StartPage = z.infer<typeof startPageSchema>;
 export type CloseBehavior = z.infer<typeof closeBehaviorSchema>;
 export type GeneralSettings = z.infer<typeof generalSettingsSchema>;
+export type TranscriptionEngine = z.infer<typeof transcriptionEngineSchema>;
+export type SpeechSupport = z.infer<typeof speechSupportSchema>;
+export type AudioSettings = z.infer<typeof audioSettingsSchema>;
+export type TranscriptionSettings = z.infer<typeof transcriptionSettingsSchema>;
+export type CaptionSettings = z.infer<typeof captionSettingsSchema>;
+export type ShortcutSettings = z.infer<typeof shortcutSettingsSchema>;
+export type ProviderConfig = z.infer<typeof providerConfigSchema>;
 export type Settings = z.infer<typeof settingsSchema>;
 export type DataCategory = z.infer<typeof dataCategorySchema>;
 export type DataFile = z.infer<typeof dataFileSchema>;

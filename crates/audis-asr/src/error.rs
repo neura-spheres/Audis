@@ -34,6 +34,33 @@ pub enum AsrError {
     /// This build has no local engine compiled in.
     #[error("this build has no local speech engine")]
     NoLocalEngine,
+
+    /// A cloud provider could not be reached.
+    #[error("could not reach {provider}: {detail}")]
+    ProviderUnreachable {
+        /// Provider name, for the message.
+        provider: String,
+        /// Detail from the HTTP client.
+        detail: String,
+    },
+
+    /// A cloud provider refused the request.
+    #[error("{provider} refused the request ({status}): {detail}")]
+    ProviderRejected {
+        /// Provider name, for the message.
+        provider: String,
+        /// HTTP status.
+        status: u16,
+        /// The provider's own message, when it gave one.
+        detail: String,
+    },
+
+    /// A provider is configured for speech but has no key saved.
+    #[error("no API key saved for {provider}")]
+    ProviderKeyMissing {
+        /// Provider name, for the message.
+        provider: String,
+    },
 }
 
 impl AsrError {
@@ -50,6 +77,54 @@ impl AsrError {
                 data_preserved: true,
                 suggested_action: "Open Models and install Whisper Base. It is free and runs on \
                                    this PC."
+                    .to_owned(),
+                technical_details,
+                diagnostic_code: DiagnosticCode::ConfigInvalid,
+            },
+
+            AsrError::ProviderUnreachable { provider, .. } => UserFacingError {
+                title: format!("Audis could not reach {provider}"),
+                explanation: "Cloud transcription needs an internet connection, and this request                               did not get through. Nothing you said was lost from the recording                               on this PC."
+                    .to_owned(),
+                data_preserved: true,
+                suggested_action: "Check your internet connection. To keep working offline, open                                    Transcription and switch back to a model that runs on this PC."
+                    .to_owned(),
+                technical_details,
+                diagnostic_code: DiagnosticCode::Unexpected,
+            },
+
+            AsrError::ProviderRejected {
+                provider, status, ..
+            } => UserFacingError {
+                title: format!("{provider} refused the request"),
+                explanation: match status {
+                    401 | 403 => format!(
+                        "{provider} did not accept your API key. It may be wrong, revoked, or                          lack permission for speech."
+                    ),
+                    429 => format!(
+                        "You have hit {provider}'s rate limit, or run out of free quota for now."
+                    ),
+                    _ => format!("{provider} returned an error and could not transcribe the audio."),
+                },
+                data_preserved: true,
+                suggested_action: match status {
+                    401 | 403 => "Open Providers and save the key again.".to_owned(),
+                    429 => "Wait a little, or switch to a model that runs on this PC in                             Transcription."
+                        .to_owned(),
+                    _ => "Try again. If it continues, switch to a model that runs on this PC."
+                        .to_owned(),
+                },
+                technical_details,
+                diagnostic_code: DiagnosticCode::Unexpected,
+            },
+
+            AsrError::ProviderKeyMissing { provider } => UserFacingError {
+                title: format!("No API key for {provider}"),
+                explanation: format!(
+                    "Audis is set to transcribe with {provider}, but no key is saved for it."
+                ),
+                data_preserved: true,
+                suggested_action: "Open Providers and save a key, or switch to a model that runs                                    on this PC in Transcription."
                     .to_owned(),
                 technical_details,
                 diagnostic_code: DiagnosticCode::ConfigInvalid,

@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
-
 import { ErrorNotice } from "@/components/ErrorNotice";
 import { Button } from "@/components/controls";
 import { DownloadIcon, TrashIcon } from "@/components/icons";
-import { AUDIS_EVENTS } from "@/services/events";
+import { AUDIS_EVENTS, subscribe } from "@/services/events";
 import {
   cancelModelDownload,
   installModel,
@@ -63,9 +61,8 @@ export function ModelsView() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    const unlisten = listen(AUDIS_EVENTS.modelProgress, (event) => {
-      const parsed = modelProgressSchema.safeParse(event.payload);
+    return subscribe(AUDIS_EVENTS.modelProgress, (payload) => {
+      const parsed = modelProgressSchema.safeParse(payload);
       if (!parsed.success) return;
 
       if (parsed.data.done || parsed.data.error) {
@@ -86,13 +83,6 @@ export function ModelsView() {
 
       setProgress(parsed.data);
     });
-
-    return () => {
-      cancelled = true;
-      void unlisten.then((stop) => {
-        if (cancelled) stop();
-      });
-    };
   }, [refresh]);
 
   const install = (id: ModelId) => {
@@ -184,6 +174,21 @@ function ModelCard({
             {model.installed ? (
               <span className="text-caption2 font-medium" style={{ color: "var(--color-success)" }}>
                 Installed
+              </span>
+            ) : null}
+            {/* Speed decides whether a model is usable at all, so it sits next
+                to the name rather than buried in the description. */}
+            {!info.keepsUpLive ? (
+              <span
+                className="px-1.5 py-0.5 text-caption2 font-medium"
+                style={{
+                  background: "color-mix(in srgb, var(--color-warning) 18%, transparent)",
+                  borderRadius: "var(--radius-chip)",
+                  color: "var(--color-warning)",
+                }}
+                title="This model decodes slower than people speak, so live captions fall behind and never catch up."
+              >
+                Too slow for live
               </span>
             ) : null}
           </div>

@@ -94,9 +94,25 @@ pub fn delete_key(provider: ProviderId) -> Result<()> {
 mod tests {
     use super::*;
 
-    /// The keystore is a real OS service, so these tests touch it. They use a
-    /// provider slug that no real config uses and clean up after themselves.
-    /// If the OS store is unavailable (headless CI), they skip rather than fail.
+    /// The keystore is one OS-wide resource shared by the whole machine, and
+    /// these tests all use the same provider slot. Cargo runs tests in a thread
+    /// pool by default, so without this they overwrite each other's key and
+    /// fail intermittently — which is exactly what they did.
+    static STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Take exclusive use of the test credential slot.
+    ///
+    /// A panicking test poisons the lock but leaves the store perfectly usable,
+    /// so the poison is recovered rather than cascaded into every later test.
+    fn exclusive() -> std::sync::MutexGuard<'static, ()> {
+        STORE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// These tests touch the real keystore. They use a provider slug that no
+    /// real config uses and clean up after themselves. If the OS store is
+    /// unavailable (headless CI), they skip rather than fail.
     fn store_available() -> bool {
         Entry::new("ai.neura.audis.test", "probe")
             .and_then(|entry| entry.set_password("probe"))
@@ -105,6 +121,7 @@ mod tests {
 
     #[test]
     fn a_key_round_trips_and_can_be_deleted() {
+        let _guard = exclusive();
         if !store_available() {
             eprintln!("skipping: no OS credential store on this machine");
             return;
@@ -131,6 +148,7 @@ mod tests {
 
     #[test]
     fn whitespace_is_trimmed_so_a_pasted_key_still_works() {
+        let _guard = exclusive();
         if !store_available() {
             return;
         }
@@ -156,6 +174,7 @@ mod tests {
 
     #[test]
     fn a_missing_key_reads_as_none_not_an_error() {
+        let _guard = exclusive();
         if !store_available() {
             return;
         }

@@ -8,22 +8,6 @@ import { NotBuiltYet } from "@/components/NotBuiltYet";
  * but nothing here pretends to work.
  */
 
-export function TranscriptionView() {
-  return (
-    <NotBuiltYet
-      summary="Speech-to-text runs as a streaming recognition pipeline, so captions appear while someone is still speaking rather than after they finish."
-      planned={[
-        "Choose a cloud or local recognition engine",
-        "Language selection and automatic detection",
-        "Interim and final caption behaviour",
-        "Punctuation and profanity handling",
-        "Vocabulary hints for names and jargon",
-        "Offline buffering, so a dropped connection never loses the session",
-      ]}
-    />
-  );
-}
-
 export function SpeakersView() {
   return (
     <NotBuiltYet
@@ -61,22 +45,6 @@ export function AssistantView() {
         When the assistant is off, no transcript text is sent anywhere.
       </p>
     </NotBuiltYet>
-  );
-}
-
-export function CaptionsView() {
-  return (
-    <NotBuiltYet
-      summary="Caption windows float above your other apps, and can be moved, resized and styled independently of the Audis window."
-      planned={[
-        "Font, size, weight and line spacing",
-        "Maximum lines and display duration",
-        "Background, opacity and click-through",
-        "Speaker colours and source labels",
-        "Separate windows per source or per speaker",
-        "Saved layouts across multiple monitors",
-      ]}
-    />
   );
 }
 

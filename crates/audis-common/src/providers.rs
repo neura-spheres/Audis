@@ -44,6 +44,43 @@ pub struct ProviderInfo {
     pub models: Vec<String>,
     /// True when the endpoint is user-supplied rather than fixed.
     pub needs_endpoint: bool,
+    /// How this provider transcribes speech, or `None` if it cannot.
+    ///
+    /// Carried here so the Transcription page can offer only the providers that
+    /// can actually hear, rather than the frontend keeping its own list that
+    /// would drift from `speech()`.
+    pub speech: Option<SpeechSupport>,
+}
+
+/// The shape of a provider's speech-to-text API.
+///
+/// Two shapes cover the field. Most services copied OpenAI's transcription
+/// endpoint, so one client speaks to Groq, OpenAI and a local whisper server
+/// alike. Gemini is a general model that happens to accept audio, so it needs
+/// its own request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SpeechApi {
+    /// `POST /audio/transcriptions`, multipart, as OpenAI defined it.
+    OpenAiTranscriptions,
+    /// Gemini's `generateContent` with the audio inline.
+    GeminiInline,
+}
+
+/// How a provider transcribes speech.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeechSupport {
+    /// Which request shape to use.
+    pub api: SpeechApi,
+    /// Base URL, or `None` when the user supplies the endpoint.
+    pub base_url: Option<String>,
+    /// The model used unless the user picks another.
+    pub default_model: String,
+    /// Models known to work for speech.
+    pub models: Vec<String>,
+    /// One line on what this costs and how good it is, in plain words.
+    pub summary: String,
 }
 
 impl ProviderId {
@@ -72,6 +109,73 @@ impl ProviderId {
             Self::Anthropic => "anthropic",
             Self::OpenAiCompatible => "openai-compatible",
         }
+    }
+
+    /// How this provider transcribes speech, or `None` if it cannot.
+    ///
+    /// Being an AI provider does not make a service a speech recogniser:
+    /// Anthropic and DeepSeek have no audio input at all, and offering them in
+    /// a speech picker would only produce a confusing failure at the point the
+    /// user starts talking.
+    ///
+    /// This is the answer to Whisper Base's weak Indonesian. Groq serves
+    /// `whisper-large-v3`, which is the model that actually gets Indonesian
+    /// right, on hardware fast enough to keep ahead of live speech — something
+    /// no local model on a normal CPU can do. It costs an internet connection
+    /// and sending audio off this PC, which is the user's decision to make.
+    pub fn speech(self) -> Option<SpeechSupport> {
+        match self {
+            Self::Groq => Some(SpeechSupport {
+                api: SpeechApi::OpenAiTranscriptions,
+                base_url: Some("https://api.groq.com/openai/v1".to_owned()),
+                default_model: "whisper-large-v3-turbo".to_owned(),
+                models: vec![
+                    "whisper-large-v3-turbo".to_owned(),
+                    "whisper-large-v3".to_owned(),
+                ],
+                summary: "Free tier, and fast enough to keep up with live speech. Runs \
+                          whisper-large-v3, which is far better at Indonesian than anything \
+                          Audis can run on your CPU."
+                    .to_owned(),
+            }),
+            Self::Gemini => Some(SpeechSupport {
+                api: SpeechApi::GeminiInline,
+                base_url: Some("https://generativelanguage.googleapis.com/v1beta".to_owned()),
+                default_model: "gemini-2.0-flash".to_owned(),
+                models: vec![
+                    "gemini-2.0-flash".to_owned(),
+                    "gemini-2.0-flash-lite".to_owned(),
+                ],
+                summary: "Free tier. Good at Indonesian, though it is a general model asked to \
+                          transcribe rather than a dedicated speech engine."
+                    .to_owned(),
+            }),
+            Self::OpenAiCompatible => Some(SpeechSupport {
+                api: SpeechApi::OpenAiTranscriptions,
+                // Supplied by the user: this is how OpenAI itself is reached
+                // (https://api.openai.com/v1), and equally a whisper server on
+                // this machine.
+                base_url: None,
+                default_model: "whisper-1".to_owned(),
+                models: vec![
+                    "whisper-1".to_owned(),
+                    "gpt-4o-transcribe".to_owned(),
+                    "gpt-4o-mini-transcribe".to_owned(),
+                ],
+                summary: "Any endpoint that speaks OpenAI's transcription API. Use \
+                          https://api.openai.com/v1 for OpenAI itself, which is paid and \
+                          accurate, or point it at a whisper server on your own network."
+                    .to_owned(),
+            }),
+            // Neither accepts audio. Offering them would be a promise the API
+            // cannot keep.
+            Self::DeepSeek | Self::Anthropic => None,
+        }
+    }
+
+    /// True when this provider can transcribe speech.
+    pub fn can_transcribe(self) -> bool {
+        self.speech().is_some()
     }
 
     /// Catalogue entry.
@@ -134,6 +238,7 @@ impl ProviderId {
             default_model: default_model.to_owned(),
             models: models.into_iter().map(str::to_owned).collect(),
             needs_endpoint,
+            speech: self.speech(),
         }
     }
 }

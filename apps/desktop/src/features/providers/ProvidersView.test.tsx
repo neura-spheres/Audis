@@ -4,7 +4,7 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ProvidersView } from "./ProvidersView";
-import { AUDIS_PROVIDERS_MOCK } from "@/test/fixtures";
+import { AUDIS_PROVIDERS_MOCK, withAmbientIpc } from "@/test/fixtures";
 
 describe("ProvidersView", () => {
   afterEach(() => {
@@ -12,10 +12,12 @@ describe("ProvidersView", () => {
   });
 
   it("offers a key field and links to where you get one", async () => {
-    mockIPC((command) => {
-      if (command === "list_providers") return AUDIS_PROVIDERS_MOCK;
-      throw new Error(`unexpected ${command}`);
-    });
+    mockIPC(
+      withAmbientIpc((command) => {
+        if (command === "list_providers") return AUDIS_PROVIDERS_MOCK;
+        throw new Error(`unexpected ${command}`);
+      }),
+    );
 
     render(<ProvidersView />);
 
@@ -29,14 +31,16 @@ describe("ProvidersView", () => {
 
   it("sends the key to Rust and clears it from the field", async () => {
     const saved: { id: string; key: string }[] = [];
-    mockIPC((command, args) => {
-      if (command === "list_providers") return AUDIS_PROVIDERS_MOCK;
-      if (command === "set_provider_key") {
-        saved.push(args as { id: string; key: string });
-        return null;
-      }
-      throw new Error(`unexpected ${command}`);
-    });
+    mockIPC(
+      withAmbientIpc((command, args) => {
+        if (command === "list_providers") return AUDIS_PROVIDERS_MOCK;
+        if (command === "set_provider_key") {
+          saved.push(args as { id: string; key: string });
+          return null;
+        }
+        throw new Error(`unexpected ${command}`);
+      }),
+    );
 
     render(<ProvidersView />);
     await screen.findByText("Google Gemini");
@@ -57,12 +61,14 @@ describe("ProvidersView", () => {
 
   /// The core promise of the credential design: a saved key is never shown.
   it("never renders a saved key, not even partially", async () => {
-    mockIPC((command) => {
-      if (command === "list_providers") {
-        return [{ ...AUDIS_PROVIDERS_MOCK[0], hasKey: true }];
-      }
-      throw new Error(`unexpected ${command}`);
-    });
+    mockIPC(
+      withAmbientIpc((command) => {
+        if (command === "list_providers") {
+          return [{ ...AUDIS_PROVIDERS_MOCK[0], hasKey: true }];
+        }
+        throw new Error(`unexpected ${command}`);
+      }),
+    );
 
     const { container } = render(<ProvidersView />);
     await screen.findByText("Google Gemini");
@@ -81,10 +87,12 @@ describe("ProvidersView", () => {
   });
 
   it("offers deleting the key only once one exists", async () => {
-    mockIPC((command) => {
-      if (command === "list_providers") return AUDIS_PROVIDERS_MOCK;
-      throw new Error(`unexpected ${command}`);
-    });
+    mockIPC(
+      withAmbientIpc((command) => {
+        if (command === "list_providers") return AUDIS_PROVIDERS_MOCK;
+        throw new Error(`unexpected ${command}`);
+      }),
+    );
 
     render(<ProvidersView />);
     await screen.findByText("Google Gemini");

@@ -69,11 +69,71 @@ impl Default for GeneralSettings {
     }
 }
 
+/// Which devices to capture from.
+///
+/// `None` means "whatever Windows calls the default", which is what most people
+/// want and what survives plugging in a headset mid-session.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AudioSettings {
+    /// Microphone endpoint id, or the Windows default.
+    pub microphone_id: Option<String>,
+    /// Output endpoint to capture via loopback, or the Windows default.
+    pub computer_audio_id: Option<String>,
+}
+
+/// What actually recognises speech.
+///
+/// The one setting in Audis that changes where your voice goes. Local keeps
+/// audio on this PC and always works; a provider sends it over the internet in
+/// exchange for accuracy no local model on a normal CPU can match. Because that
+/// is a real trade rather than a preference, it is a single explicit choice
+/// rather than something inferred from which model happens to be installed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum TranscriptionEngine {
+    /// Whisper on this PC. Free, offline, private.
+    Local {
+        /// Which local model to load.
+        model: crate::models::ModelId,
+    },
+    /// A cloud provider. Needs a key, an internet connection, and sends audio.
+    Cloud {
+        /// Which provider. Must be one where `can_transcribe` is true.
+        provider: crate::providers::ProviderId,
+        /// The provider's speech model.
+        model: String,
+    },
+}
+
+impl Default for TranscriptionEngine {
+    fn default() -> Self {
+        // Local by default, always. Audis' promise is that it works offline
+        // with no account, and a default that quietly uploaded audio would
+        // break that before the user had chosen anything.
+        Self::Local {
+            model: crate::models::ModelId::WhisperBase,
+        }
+    }
+}
+
+impl TranscriptionEngine {
+    /// True when using this engine sends audio off this PC.
+    pub fn sends_audio_away(&self) -> bool {
+        matches!(self, Self::Cloud { .. })
+    }
+}
+
 /// Speech recognition preferences.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct TranscriptionSettings {
+    /// What recognises speech: a local model, or a cloud provider.
+    pub engine: TranscriptionEngine,
     /// Which local model to use.
+    ///
+    /// Kept alongside `engine` so switching to a provider and back remembers
+    /// the model you had, rather than silently resetting it.
     pub model: crate::models::ModelId,
     /// Which language to recognise.
     ///
@@ -90,6 +150,7 @@ pub struct TranscriptionSettings {
 impl Default for TranscriptionSettings {
     fn default() -> Self {
         Self {
+            engine: TranscriptionEngine::default(),
             model: crate::models::ModelId::WhisperBase,
             language: crate::language::Language::default(),
             capture_microphone: true,
@@ -162,6 +223,8 @@ pub struct Settings {
     pub version: u32,
     /// Cross-cutting preferences.
     pub general: GeneralSettings,
+    /// Capture device choices.
+    pub audio: AudioSettings,
     /// Speech recognition.
     pub transcription: TranscriptionSettings,
     /// Caption appearance.
@@ -179,6 +242,7 @@ impl Default for Settings {
         Self {
             version: SETTINGS_VERSION,
             general: GeneralSettings::default(),
+            audio: AudioSettings::default(),
             transcription: TranscriptionSettings::default(),
             captions: CaptionSettings::default(),
             shortcuts: ShortcutSettings::default(),
@@ -222,6 +286,47 @@ mod tests {
         for banned in ["apiKey", "api_key", "secret", "password"] {
             assert!(!json.contains(banned), "settings leaked a {banned} field");
         }
+    }
+
+    /// Audis' promise is that it works offline with no account. A default that
+    /// uploaded audio would break that before the user chose anything, so the
+    /// default engine is local and this test is what keeps it that way.
+    #[test]
+    fn speech_never_leaves_this_pc_by_default() {
+        let settings = Settings::default();
+
+        assert!(
+            !settings.transcription.engine.sends_audio_away(),
+            "the default engine must not send audio off this PC"
+        );
+        assert!(matches!(
+            settings.transcription.engine,
+            TranscriptionEngine::Local { .. }
+        ));
+    }
+
+    /// A cloud engine must be honest about what it does.
+    #[test]
+    fn a_cloud_engine_declares_that_it_sends_audio_away() {
+        let engine = TranscriptionEngine::Cloud {
+            provider: crate::providers::ProviderId::Groq,
+            model: "whisper-large-v3".to_owned(),
+        };
+
+        assert!(engine.sends_audio_away());
+    }
+
+    /// Only providers that can actually transcribe may be chosen as an engine.
+    #[test]
+    fn every_provider_offered_for_speech_can_actually_transcribe() {
+        use crate::providers::ProviderId;
+
+        assert!(ProviderId::Groq.can_transcribe());
+        assert!(ProviderId::Gemini.can_transcribe());
+        assert!(ProviderId::OpenAiCompatible.can_transcribe());
+        // Neither has an audio API at all.
+        assert!(!ProviderId::Anthropic.can_transcribe());
+        assert!(!ProviderId::DeepSeek.can_transcribe());
     }
 
     #[test]

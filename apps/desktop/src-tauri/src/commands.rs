@@ -5,7 +5,7 @@
 
 use audis_common::{AppInfo, AppPaths, DataFileListing, Result, Settings, identity};
 use serde::Serialize;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::data_files;
@@ -44,8 +44,37 @@ pub fn get_settings(state: State<'_, AppState>) -> Result<Settings> {
 
 /// Replace user settings and persist them.
 #[tauri::command]
-pub fn update_settings(state: State<'_, AppState>, settings: Settings) -> Result<Settings> {
-    state.settings.set(settings)
+pub fn update_settings(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    settings: Settings,
+) -> Result<Settings> {
+    let saved = state.settings.set(settings)?;
+
+    // Click-through is a window property, not something the page can style, so
+    // applying it is Rust's job. Without this the switch would save a value
+    // that never took effect.
+    apply_caption_click_through(&app, saved.captions.click_through);
+
+    // Announced to every window, not just the one that made the change: the
+    // caption overlay renders from these and would otherwise keep showing the
+    // old size and opacity until Audis restarted.
+    app.emit(audis_common::events::SETTINGS_CHANGED, &saved)
+        .ok();
+
+    Ok(saved)
+}
+
+/// Let clicks pass through the caption overlay to whatever is behind it.
+///
+/// Kept in one place because two callers need it: saving the setting, and
+/// starting a session, which is when the overlay first appears.
+pub fn apply_caption_click_through(app: &tauri::AppHandle, click_through: bool) {
+    if let Some(window) = app.get_webview_window("captions")
+        && let Err(error) = window.set_ignore_cursor_events(click_through)
+    {
+        tracing::warn!(%error, "could not change caption click-through");
+    }
 }
 
 /// Every file Audis has written, grouped by category.
@@ -182,7 +211,10 @@ pub fn list_models(
     state: State<'_, AppState>,
     models: State<'_, std::sync::Arc<crate::model_store::ModelStore>>,
 ) -> Result<Vec<audis_common::InstalledModel>> {
-    Ok(models.list(&state.paths))
+    // The recommendation depends on the language being recognised: Base is
+    // good at English and poor at Indonesian, so a single global "recommended"
+    // badge would mislead exactly the users Audis is built for.
+    Ok(models.list(&state.paths, state.settings.get().transcription.language))
 }
 
 /// Download and install a model, reporting progress on `audis://model/progress`.
@@ -325,7 +357,7 @@ pub fn list_features(
             // Status is computed from what is actually on this machine rather
             // than hardcoded, so the launcher cannot claim a feature works when
             // its model or key is missing.
-            let needs_ai = matches!(id, FeatureId::MeetingAssistant | FeatureId::InterviewPractice);
+            let needs_ai = id.uses_cloud_ai();
 
             let (status, blocker) = if !has_model {
                 (
@@ -435,4 +467,131 @@ mod tests {
         assert!(json.get("webviewVersion").is_some());
         assert!(json.get("storageBytes").is_some());
     }
+}
+
+/// Start a live session for `feature`.
+///
+/// Resolves the model and devices from settings, so the UI does not have to
+/// know what a session needs.
+#[tauri::command]
+pub fn start_session(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    models: State<'_, std::sync::Arc<crate::model_store::ModelStore>>,
+    session: State<'_, crate::session::SessionController>,
+    feature: audis_common::FeatureId,
+) -> Result<audis_common::SessionStatus> {
+    let settings = state.settings.get();
+
+    let engine = build_engine(&state, &models, &settings)?;
+
+    session.start(
+        &app,
+        crate::session::SessionRequest {
+            engine,
+            paths: state.paths.clone(),
+            mode: feature,
+            language: settings.transcription.language,
+            microphone_id: settings.audio.microphone_id.clone(),
+            computer_audio_id: settings.audio.computer_audio_id.clone(),
+            want_microphone: settings.transcription.capture_microphone,
+            want_computer_audio: settings.transcription.capture_computer_audio,
+        },
+    )
+}
+
+/// Build whatever the user chose to recognise speech with.
+///
+/// The key is read here and handed to the engine directly, never through
+/// settings and never back to the frontend: this is the one place in Audis that
+/// holds a plaintext key, and it holds it only for the life of the session.
+fn build_engine(
+    state: &AppState,
+    models: &std::sync::Arc<crate::model_store::ModelStore>,
+    settings: &Settings,
+) -> Result<Box<dyn audis_asr::AsrEngine>> {
+    use audis_common::TranscriptionEngine;
+
+    match &settings.transcription.engine {
+        TranscriptionEngine::Local { model } => {
+            let path = models.path_if_installed(&state.paths, *model).ok_or(
+                audis_common::AudisError::Configuration {
+                    detail: "no speech model is installed. Open Models and install Whisper Base."
+                        .to_owned(),
+                },
+            )?;
+
+            // Loading is seconds of work and allocates the whole model. Doing it
+            // here means a missing or corrupt file fails before any device is
+            // opened, rather than half-starting a session.
+            let engine = audis_asr::WhisperEngine::load(&path).map_err(as_configuration)?;
+            Ok(Box::new(engine))
+        }
+
+        TranscriptionEngine::Cloud { provider, model } => {
+            let key = crate::credentials::get_key(*provider)?.ok_or(
+                audis_common::AudisError::Configuration {
+                    detail: format!(
+                        "Audis is set to transcribe with {}, but no API key is saved for it.                          Open Providers to add one.",
+                        provider.info().name
+                    ),
+                },
+            )?;
+
+            // A user-supplied endpoint only matters for providers that need one;
+            // CloudEngine ignores it otherwise.
+            let endpoint = settings
+                .providers
+                .iter()
+                .find(|config| config.id == *provider)
+                .and_then(|config| config.endpoint.clone());
+
+            let engine = audis_asr::CloudEngine::new(*provider, model.clone(), endpoint, key)
+                .map_err(as_configuration)?;
+            Ok(Box::new(engine))
+        }
+    }
+}
+
+/// Carry an ASR failure out through a command.
+///
+/// `AsrError` already knows how to explain itself to a user, but a command
+/// returns `AudisError`, which has no variant that can hold a ready-made
+/// message. The explanation is passed through as the detail so the words the
+/// user reads are still the specific ones — "could not reach Groq", not a
+/// generic failure — even though the surrounding frame says configuration.
+/// Giving `AudisError` a variant that wraps a `UserFacingError` would be the
+/// better fix and is a wider change than this one.
+fn as_configuration(error: audis_asr::AsrError) -> audis_common::AudisError {
+    let facing = error.to_user_facing();
+    audis_common::AudisError::Configuration {
+        detail: format!("{} {}", facing.explanation, facing.suggested_action),
+    }
+}
+
+/// Stop the running session and release every device.
+#[tauri::command]
+pub fn stop_session(
+    app: tauri::AppHandle,
+    session: State<'_, crate::session::SessionController>,
+) -> Result<audis_common::SessionStatus> {
+    session.stop(&app)
+}
+
+/// Pause or resume the running session.
+#[tauri::command]
+pub fn set_session_paused(
+    app: tauri::AppHandle,
+    session: State<'_, crate::session::SessionController>,
+    paused: bool,
+) -> Result<audis_common::SessionStatus> {
+    session.set_paused(&app, paused)
+}
+
+/// The running session, if there is one.
+#[tauri::command]
+pub fn get_session_status(
+    session: State<'_, crate::session::SessionController>,
+) -> Result<Option<audis_common::SessionStatus>> {
+    Ok(session.status())
 }

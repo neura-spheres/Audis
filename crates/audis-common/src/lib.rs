@@ -24,11 +24,15 @@ pub mod transcript;
 pub use error::{AudisError, DiagnosticCode, Result, UserFacingError};
 pub use features::{Feature, FeatureId, FeatureStatus};
 pub use files::{DataCategory, DataCategoryGroup, DataFile, DataFileListing};
-pub use ipc::{AppInfo, AudioSourceKind, DiagnosticWarning};
+pub use ipc::{AppInfo, AudioSourceKind, DiagnosticWarning, events};
 pub use language::Language;
 pub use models::{InstalledModel, ModelDownloadProgress, ModelId, ModelInfo};
 pub use paths::AppPaths;
-pub use providers::{ProviderConfig, ProviderId, ProviderInfo, ProviderStatus};
+pub use providers::{
+    ProviderConfig, ProviderId, ProviderInfo, ProviderStatus, SpeechApi, SpeechSupport,
+};
 pub use session::{SessionMode, SessionState, SessionStatus};
-pub use settings::Settings;
+pub use settings::{
+    AudioSettings, CaptionSettings, Settings, TranscriptionEngine, TranscriptionSettings,
+};
 pub use transcript::{AsrState, AsrStatus, TranscriptSegment};

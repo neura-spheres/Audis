@@ -11,15 +11,15 @@ import { StorageView } from "@/features/settings/StorageView";
 import { PrivacyView } from "@/features/settings/PrivacyView";
 import { DiagnosticsView } from "@/features/settings/DiagnosticsView";
 import { AudioView } from "@/features/audio/AudioView";
+import { CaptionsView } from "@/features/captions/CaptionsView";
 import { FeaturesView } from "@/features/launcher/FeaturesView";
 import { ModelsView } from "@/features/models/ModelsView";
 import { ProvidersView } from "@/features/providers/ProvidersView";
+import { TranscriptionView } from "@/features/transcription/TranscriptionView";
 import {
   AssistantView,
-  CaptionsView,
   ShortcutsView,
   SpeakersView,
-  TranscriptionView,
   UpdatesView,
 } from "@/features/settings/PlannedViews";
 

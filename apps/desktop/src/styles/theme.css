@@ -130,6 +130,14 @@
     height: 100%;
   }
 
+  /* The caption overlay is a transparent, always-on-top window that floats over
+   * whatever the user is watching. It loads this same stylesheet, so without
+   * this the body below paints an opaque rectangle across the entire window and
+   * the "transparent" overlay is a black bar with a caption inside it. */
+  :root[data-audis-window="captions"] body {
+    background-color: transparent;
+  }
+
   body {
     margin: 0;
     background-color: var(--surface-window);
@@ -175,5 +183,29 @@
 
   ::selection {
     background-color: color-mix(in srgb, var(--color-accent) 28%, transparent);
+  }
+}
+
+/* New captions rise a few pixels as they arrive, which makes it obvious which
+   line is new without moving the eye. Short enough not to delay reading. */
+@keyframes audis-caption-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes audis-caption-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
 }

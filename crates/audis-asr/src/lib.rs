@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::all)]
 
+pub mod cloud;
 pub mod engine;
 pub mod error;
 pub mod prepare;
@@ -19,9 +20,10 @@ pub mod vad;
 #[cfg(feature = "local-whisper")]
 pub mod whisper;
 
+pub use cloud::CloudEngine;
 pub use engine::{AsrCapabilities, AsrEngine, AsrResult};
 pub use error::{AsrError, Result};
-pub use prepare::{TARGET_SAMPLE_RATE, prepare};
+pub use prepare::{Resampler, TARGET_SAMPLE_RATE, downmix_to_mono, prepare};
 pub use vad::{EndpointConfig, EndpointEvent, Endpointer, Utterance};
 
 #[cfg(feature = "local-whisper")]

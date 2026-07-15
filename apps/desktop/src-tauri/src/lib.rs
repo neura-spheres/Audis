@@ -6,7 +6,9 @@ mod credentials;
 mod data_files;
 mod logging;
 mod model_store;
+mod session;
 mod settings_store;
+mod transcript_store;
 mod tray;
 
 use audis_common::AppPaths;
@@ -14,6 +16,85 @@ use tauri::{Manager, WindowEvent};
 
 use commands::AppState;
 use settings_store::SettingsStore;
+
+/// Refuse to open a window that could only show a browser error page.
+///
+/// A binary from plain `cargo build`/`cargo run` has no frontend inside it: it
+/// loads the UI from `build.devUrl`. With no Vite server there, the window is
+/// nothing but "127.0.0.1 refused to connect" while the log cheerfully reports
+/// "Audis ready" — accurate and thoroughly misleading.
+///
+/// This is not hypothetical. `cargo build` and `tauri build --debug` write the
+/// *same* path, `target/debug/audis-desktop.exe`, so a routine compile check
+/// silently replaces a working app with one that cannot render, and the next
+/// launch of a previously-fine exe shows the error page. Refusing to start is
+/// what makes that impossible rather than merely documented: this binary is a
+/// compile artifact, not an app, and it now says so instead of pretending.
+///
+/// Keyed on `tauri::is_dev()` rather than `debug_assertions`, because
+/// `tauri build --debug` is also a debug binary but embeds the frontend and
+/// works perfectly. Never fires for a shipped app.
+fn exit_if_the_ui_cannot_load(app: &tauri::AppHandle) {
+    if !tauri::is_dev() {
+        return;
+    }
+
+    let Some(dev_url) = app.config().build.dev_url.clone() else {
+        return;
+    };
+
+    if dev_server_is_reachable(&dev_url) {
+        return;
+    }
+
+    let message = format!(
+        "This binary has no user interface inside it: it expects a Vite dev server at {dev_url}, \
+         and nothing is listening there.\n\n\
+         It was produced by `cargo build` or `cargo run`, which are compile checks rather than \
+         ways to run Audis. Opening a window now would only show a browser connection error.\n\n\
+         To run Audis:\n  ./scripts/dev.ps1     (development, with hot reload)\n  \
+         ./scripts/build.ps1   (a standalone app in target/release)"
+    );
+
+    tracing::error!(%dev_url, "refusing to start: this build has no UI and no dev server is running");
+    eprintln!("\nAudis cannot start.\n\n{message}\n");
+
+    // Before the window is shown, so the error page never reaches the screen.
+    std::process::exit(2);
+}
+
+/// True when something is listening on the dev server's host and port.
+///
+/// A plain TCP connect: enough to tell "Vite is running" from "nothing is
+/// there", without waiting on an HTTP response. Under `tauri dev` the CLI has
+/// already waited for the server, so this is reached only when it is genuinely
+/// absent — but it retries briefly rather than trusting one attempt.
+fn dev_server_is_reachable(dev_url: &tauri::Url) -> bool {
+    use std::net::{TcpStream, ToSocketAddrs};
+
+    let Some(host) = dev_url.host_str() else {
+        return false;
+    };
+    let port = dev_url.port_or_known_default().unwrap_or(80);
+
+    for attempt in 0..3 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
+
+        let Ok(addresses) = (host, port).to_socket_addrs() else {
+            continue;
+        };
+
+        for address in addresses {
+            if TcpStream::connect_timeout(&address, std::time::Duration::from_millis(500)).is_ok() {
+                return true;
+            }
+        }
+    }
+
+    false
+}
 
 /// Build and run the application.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -46,6 +127,7 @@ pub fn run() {
         .manage(AppState { paths, settings })
         .manage(audio_test::AudioTestState::default())
         .manage(std::sync::Arc::new(model_store::ModelStore::default()))
+        .manage(session::SessionController::default())
         .invoke_handler(tauri::generate_handler![
             commands::get_app_info,
             commands::get_settings,
@@ -67,6 +149,10 @@ pub fn run() {
             commands::delete_provider_key,
             commands::update_provider,
             commands::list_features,
+            commands::start_session,
+            commands::stop_session,
+            commands::set_session_paused,
+            commands::get_session_status,
             commands::close_main_window,
         ])
         .on_window_event(|window, event| {
@@ -87,6 +173,10 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // Before the window is shown, so a UI-less build exits rather than
+            // displaying a browser connection error.
+            exit_if_the_ui_cannot_load(app.handle());
+
             let state = app.state::<AppState>();
             if state.settings.get().general.show_tray_icon {
                 tray::build(app.handle())?;

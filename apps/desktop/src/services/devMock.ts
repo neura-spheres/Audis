@@ -21,7 +21,10 @@ import type { Settings } from "@/schemas/ipc";
 export function installDevIpcMock(): void {
   if ("__TAURI_INTERNALS__" in window) return;
 
-  // Held in memory so settings changes stick while developing.
+  // Held in memory so settings changes stick while developing. This mirrors
+  // Rust's `Settings::default()`; the shape is enforced by the `Settings` type,
+  // so a new field in Rust breaks the build here rather than silently going
+  // missing at runtime.
   let settings: Settings = {
     version: 1,
     general: {
@@ -30,6 +33,31 @@ export function installDevIpcMock(): void {
       closeBehavior: "minimizeToTray",
       showTrayIcon: true,
     },
+    audio: {
+      microphoneId: null,
+      computerAudioId: null,
+    },
+    transcription: {
+      engine: { kind: "local", model: "whisperBase" },
+      model: "whisperBase",
+      language: "indonesian",
+      captureMicrophone: true,
+      captureComputerAudio: true,
+    },
+    captions: {
+      fontSize: 28,
+      maxLines: 3,
+      backgroundOpacity: 70,
+      showSourceLabels: true,
+      clickThrough: false,
+    },
+    shortcuts: {
+      stopSession: "CmdOrCtrl+Shift+S",
+      togglePause: "CmdOrCtrl+Shift+P",
+      toggleCaptions: "CmdOrCtrl+Shift+C",
+      askAssistant: "CmdOrCtrl+Shift+A",
+    },
+    providers: [],
   };
 
   mockIPC((command, args) => {

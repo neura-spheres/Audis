@@ -62,6 +62,27 @@ impl FeatureId {
         Self::InterviewPractice,
     ];
 
+    /// True when this feature sends transcript text to an AI provider.
+    ///
+    /// Drives both the "Uses cloud AI" badge and whether a provider key is
+    /// required to start, so the badge cannot promise something the launcher
+    /// then contradicts.
+    pub fn uses_cloud_ai(self) -> bool {
+        matches!(self, Self::MeetingAssistant | Self::InterviewPractice)
+    }
+
+    /// True when this feature writes a transcript to disk.
+    ///
+    /// Live Caption's promise is literally "No transcript is written to disk",
+    /// so this is what enforces it. The session pipeline never constructs a
+    /// writer when this is false, rather than writing a file and hiding it.
+    pub fn persists_transcript(self) -> bool {
+        match self {
+            Self::LiveCaption => false,
+            Self::Transcription | Self::MeetingAssistant | Self::InterviewPractice => true,
+        }
+    }
+
     /// Static description. Status is decided at runtime by the app, which knows
     /// whether a model is installed and a device exists.
     pub fn describe(self) -> (&'static str, &'static str, &'static [&'static str]) {
@@ -146,5 +167,65 @@ mod tests {
 
         assert!(feature.blocker.is_some());
         assert!(matches!(feature.status, FeatureStatus::NeedsSetup));
+    }
+
+    /// Live Caption's description promises, in as many words, that nothing is
+    /// written to disk. Privacy claims are the ones users cannot verify for
+    /// themselves, so the promise and the behaviour are pinned to each other
+    /// here: changing either alone fails this test.
+    #[test]
+    fn live_caption_promises_no_transcript_and_writes_none() {
+        let (_, summary, details) = FeatureId::LiveCaption.describe();
+
+        assert!(
+            summary.contains("Nothing is saved"),
+            "the summary no longer makes the promise this test enforces"
+        );
+        assert!(
+            details
+                .iter()
+                .any(|line| line.contains("No transcript is written to disk")),
+            "the details no longer make the promise this test enforces"
+        );
+        assert!(
+            !FeatureId::LiveCaption.persists_transcript(),
+            "Live Caption promises no transcript but would write one"
+        );
+    }
+
+    /// The mirror image: a feature that advertises a saved transcript must
+    /// actually save one, or the launcher is selling something absent.
+    ///
+    /// Spelled out per feature rather than inferred from the prose. The first
+    /// version of this searched descriptions for "saved" and matched Live
+    /// Caption's "Nothing is saved", asserting the exact opposite of the
+    /// promise. Which mode saves is a decision, so it is written as one.
+    #[test]
+    fn every_feature_advertising_a_transcript_writes_one() {
+        assert!(
+            FeatureId::Transcription.persists_transcript(),
+            "Transcription advertises a saved, searchable transcript"
+        );
+        assert!(
+            FeatureId::MeetingAssistant.persists_transcript(),
+            "Meeting Assistant advertises everything Transcription does"
+        );
+        assert!(
+            FeatureId::InterviewPractice.persists_transcript(),
+            "Interview Practice advertises saved feedback for later review"
+        );
+        assert!(
+            !FeatureId::LiveCaption.persists_transcript(),
+            "Live Caption is the only mode that writes nothing"
+        );
+    }
+
+    /// A feature that needs a provider key must be the one that says so.
+    #[test]
+    fn only_cloud_features_are_marked_as_using_cloud_ai() {
+        assert!(!FeatureId::LiveCaption.uses_cloud_ai());
+        assert!(!FeatureId::Transcription.uses_cloud_ai());
+        assert!(FeatureId::MeetingAssistant.uses_cloud_ai());
+        assert!(FeatureId::InterviewPractice.uses_cloud_ai());
     }
 }
