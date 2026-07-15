@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Minimum capability set for the Audis main window. No shell execution, no unrestricted HTTP, no arbitrary filesystem access. Permissions are added only when a feature genuinely needs them.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "os:default",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [{ "path": "$APPLOCALDATA/**" }]
+    },
+    {
+      "identifier": "opener:allow-reveal-item-in-dir",
+      "allow": [{ "path": "$APPLOCALDATA/**" }]
+    }
+  ]
+}

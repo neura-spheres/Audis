@@ -1,0 +1,20 @@
+[package]
+name = "audis-common"
+description = "Shared identity, paths, error types and IPC contracts for Audis."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+directories.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

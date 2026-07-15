@@ -1,0 +1,39 @@
+# cargo-deny configuration for Audis.
+# Run locally with: cargo deny check
+
+[graph]
+targets = [{ triple = "x86_64-pc-windows-msvc" }]
+
+[advisories]
+# Fail on any known vulnerability. Add specific IDs here (with a comment
+# explaining why the crate is not exploitable in Audis) only when a fix is
+# genuinely unavailable.
+ignore = []
+
+[licenses]
+# Audis ships commercially, so copyleft licences that would impose source
+# distribution obligations on the binary are not permitted.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "MPL-2.0",           # file-level copyleft; linking is fine
+    "CC0-1.0",
+    "Unlicense",
+    "BSL-1.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

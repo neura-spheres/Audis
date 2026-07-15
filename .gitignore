@@ -1,0 +1,33 @@
+# Rust
+/target
+**/target/
+
+# Node
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# Tauri
+apps/desktop/src-tauri/gen/
+
+# Audis local artefacts
+*.log
+/test-data/audio/*.wav
+!/test-data/audio/.gitkeep
+
+# Secrets. Never commit provider credentials or signing keys.
+.env
+.env.*
+!.env.example
+*.pem
+*.pfx
+*.key
+tauri-private.key*
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json

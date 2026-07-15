@@ -1,0 +1,53 @@
+[package]
+name = "audis-desktop"
+description = "Audis by Neura Audis. Windows audio intelligence."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "audis_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+audis-common.workspace = true
+audis-audio.workspace = true
+audis-asr.workspace = true
+tokio = { version = "1", features = ["time", "sync"] }
+reqwest = { version = "0.13.4", features = ["stream", "rustls"], default-features = false }
+futures-util = "0.3.32"
+keyring = "4.1.5"
+
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+
+tauri = { version = "2.11.5", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2.4.3"
+tauri-plugin-opener = "2.5.4"
+tauri-plugin-os = "2.3.2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+# Enables the WebView devtools in a release build. Off by default.
+devtools = ["tauri/devtools"]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"

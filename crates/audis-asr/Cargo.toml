@@ -1,0 +1,30 @@
+[package]
+name = "audis-asr"
+description = "Automatic speech recognition for Audis: VAD, endpointing, and engines."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+audis-common.workspace = true
+
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+# The local engine. Optional so the workspace still builds without a C++
+# toolchain; the app degrades to "no local engine" rather than failing to
+# compile. See ADR-011.
+whisper-rs = { version = "0.16", optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[features]
+default = ["local-whisper"]
+# Builds whisper.cpp. Needs MSVC, cmake, Ninja and libclang.
+local-whisper = ["dep:whisper-rs"]
