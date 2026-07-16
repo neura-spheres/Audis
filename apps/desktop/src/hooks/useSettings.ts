@@ -11,13 +11,7 @@ interface UseSettingsResult {
   update: (change: (current: Settings) => Settings) => Promise<void>;
 }
 
-/**
- * Load settings from Rust and write changes back.
- *
- * The Rust store is the source of truth. State here is a cache that is updated
- * optimistically for a responsive UI and rolled back if the save fails, so the
- * screen never shows a setting that was not actually written.
- */
+/** Load settings from Rust and write changes back. */
 export function useSettings(): UseSettingsResult {
   const [settings, setSettings] = useState<Settings>();
   const [error, setError] = useState<UserFacingError>();
@@ -55,7 +49,6 @@ export function useSettings(): UseSettingsResult {
         setSettings(saved);
         setError(undefined);
       } catch (cause) {
-        // The save failed, so the UI must not keep showing the new value.
         setSettings(previous);
         applyTheme(resolveTheme(previous.general.theme));
         setError(toUserFacing(cause));

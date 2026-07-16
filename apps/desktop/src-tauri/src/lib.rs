@@ -6,8 +6,10 @@ mod credentials;
 mod data_files;
 mod logging;
 mod model_store;
+mod overlays;
 mod session;
 mod settings_store;
+mod shortcuts;
 mod transcript_store;
 mod tray;
 
@@ -18,22 +20,6 @@ use commands::AppState;
 use settings_store::SettingsStore;
 
 /// Refuse to open a window that could only show a browser error page.
-///
-/// A binary from plain `cargo build`/`cargo run` has no frontend inside it: it
-/// loads the UI from `build.devUrl`. With no Vite server there, the window is
-/// nothing but "127.0.0.1 refused to connect" while the log cheerfully reports
-/// "Audis ready" — accurate and thoroughly misleading.
-///
-/// This is not hypothetical. `cargo build` and `tauri build --debug` write the
-/// *same* path, `target/debug/audis-desktop.exe`, so a routine compile check
-/// silently replaces a working app with one that cannot render, and the next
-/// launch of a previously-fine exe shows the error page. Refusing to start is
-/// what makes that impossible rather than merely documented: this binary is a
-/// compile artifact, not an app, and it now says so instead of pretending.
-///
-/// Keyed on `tauri::is_dev()` rather than `debug_assertions`, because
-/// `tauri build --debug` is also a debug binary but embeds the frontend and
-/// works perfectly. Never fires for a shipped app.
 fn exit_if_the_ui_cannot_load(app: &tauri::AppHandle) {
     if !tauri::is_dev() {
         return;
@@ -59,16 +45,10 @@ fn exit_if_the_ui_cannot_load(app: &tauri::AppHandle) {
     tracing::error!(%dev_url, "refusing to start: this build has no UI and no dev server is running");
     eprintln!("\nAudis cannot start.\n\n{message}\n");
 
-    // Before the window is shown, so the error page never reaches the screen.
     std::process::exit(2);
 }
 
 /// True when something is listening on the dev server's host and port.
-///
-/// A plain TCP connect: enough to tell "Vite is running" from "nothing is
-/// there", without waiting on an HTTP response. Under `tauri dev` the CLI has
-/// already waited for the server, so this is reached only when it is genuinely
-/// absent — but it retries briefly rather than trusting one attempt.
 fn dev_server_is_reachable(dev_url: &tauri::Url) -> bool {
     use std::net::{TcpStream, ToSocketAddrs};
 
@@ -99,14 +79,12 @@ fn dev_server_is_reachable(dev_url: &tauri::Url) -> bool {
 /// Build and run the application.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Resolve and create the data tree before anything tries to log into it.
     let paths = match AppPaths::discover().and_then(|paths| {
         paths.ensure_created()?;
         Ok(paths)
     }) {
         Ok(paths) => paths,
         Err(error) => {
-            // Logging is not up yet, since its directory is what just failed.
             eprintln!("Audis could not prepare its data directory: {error}");
             std::process::exit(1);
         }
@@ -117,13 +95,13 @@ pub fn run() {
     let settings = SettingsStore::load(&paths);
 
     tauri::Builder::default()
-        // Tauri requires the single-instance plugin to be registered first.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             tracing::info!("second launch intercepted; focusing existing window");
             tray::focus_main_window(app);
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState { paths, settings })
         .manage(audio_test::AudioTestState::default())
         .manage(std::sync::Arc::new(model_store::ModelStore::default()))
@@ -153,28 +131,42 @@ pub fn run() {
             commands::stop_session,
             commands::set_session_paused,
             commands::get_session_status,
+            commands::list_provider_models,
+            commands::ask_assistant,
+            commands::list_sessions,
+            commands::get_session_transcript,
+            commands::delete_session,
+            commands::export_session,
             commands::close_main_window,
+            commands::hide_overlay,
+            commands::open_main_window,
         ])
         .on_window_event(|window, event| {
-            // Closing the main window follows the user's preference rather than
-            // always quitting, so a running session is not lost to a stray
-            // click on the X.
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() != "main" {
                     return;
                 }
+
                 let app = window.app_handle();
-                let state = app.state::<AppState>();
+                overlays::hide_all(app);
+
                 use audis_common::settings::CloseBehavior;
-                if state.settings.get().general.close_behavior == CloseBehavior::MinimizeToTray {
+                if app
+                    .state::<AppState>()
+                    .settings
+                    .get()
+                    .general
+                    .close_behavior
+                    == CloseBehavior::MinimizeToTray
+                {
                     api.prevent_close();
                     let _ = window.hide();
+                } else {
+                    app.exit(0);
                 }
             }
         })
         .setup(|app| {
-            // Before the window is shown, so a UI-less build exits rather than
-            // displaying a browser connection error.
             exit_if_the_ui_cannot_load(app.handle());
 
             let state = app.state::<AppState>();
@@ -182,11 +174,11 @@ pub fn run() {
                 tray::build(app.handle())?;
             }
 
-            // The window starts hidden so it can be shown once the WebView has
-            // content, which avoids a white flash on launch.
             if let Some(window) = app.get_webview_window("main") {
                 window.show()?;
             }
+
+            shortcuts::apply(app.handle());
 
             tracing::info!("Audis ready");
             Ok(())

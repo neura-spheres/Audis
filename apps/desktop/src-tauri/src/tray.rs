@@ -7,9 +7,6 @@ use tauri::{
 };
 
 /// Bring the main window to the foreground, restoring and focusing it.
-///
-/// Also used by the single-instance handler, so launching Audis twice focuses
-/// the existing window instead of opening another one.
 pub fn focus_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -17,6 +14,16 @@ pub fn focus_main_window(app: &AppHandle) {
         let _ = window.set_focus();
     } else {
         tracing::warn!("main window not found when trying to focus it");
+        return;
+    }
+
+    if app
+        .state::<crate::session::SessionController>()
+        .status()
+        .is_some()
+    {
+        crate::overlays::show(app, crate::overlays::Overlay::Captions);
+        crate::overlays::show(app, crate::overlays::Overlay::Controller);
     }
 }
 
@@ -31,8 +38,6 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
             tauri::Error::AssetNotFound("default window icon is missing".to_owned())
         })?)
         .tooltip("Audis")
-        // Menu on right-click only, leaving left-click free to mean "open the
-        // window", which is what Windows users expect.
         .show_menu_on_left_click(false)
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {

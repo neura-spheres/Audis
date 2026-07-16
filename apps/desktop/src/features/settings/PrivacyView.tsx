@@ -1,11 +1,6 @@
 import { GroupedList, Row } from "@/components/GroupedList";
 
-/**
- * What Audis does and does not do with your audio.
- *
- * These are commitments the architecture already enforces, stated plainly. The
- * controls that depend on recording arrive with it.
- */
+/** What Audis does and does not do with your audio. */
 export function PrivacyView() {
   return (
     <div className="flex flex-col gap-8">

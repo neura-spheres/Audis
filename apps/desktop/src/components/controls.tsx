@@ -100,10 +100,7 @@ interface ButtonProps {
   disabled?: boolean;
   /** Tooltip text. Also the accessible name unless `ariaLabel` is given. */
   title?: string;
-  /**
-   * Accessible name. Needed when the visible label is ambiguous out of context
-   * ("Open" in a list of files) or when the button is icon-only.
-   */
+  /** Accessible name. Needed when the visible label is ambiguous out of context */
   ariaLabel?: string;
 }
 

@@ -4,10 +4,7 @@ import { SegmentedControl, Switch } from "@/components/controls";
 import { useSettings } from "@/hooks/useSettings";
 import type { CloseBehavior, StartPage, ThemePreference } from "@/schemas/ipc";
 
-/**
- * General settings. Every control here is wired to the Rust settings store and
- * persists to disk immediately.
- */
+/** General settings. Every control here is wired to the Rust settings store and */
 export function GeneralView() {
   const { settings, error, update } = useSettings();
 

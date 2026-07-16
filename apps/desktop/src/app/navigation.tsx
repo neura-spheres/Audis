@@ -20,13 +20,7 @@ import {
   UpdateIcon,
 } from "@/components/icons";
 
-/**
- * The application's information architecture.
- *
- * Every section of the product is listed, including the ones whose backend does
- * not exist yet. Those render an honest "not available yet" panel describing
- * what will live there rather than dead controls that pretend to work.
- */
+/** The application's information architecture. */
 
 export type ViewId =
   | "dashboard"

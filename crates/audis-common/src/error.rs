@@ -1,8 +1,4 @@
 //! Error types and their user-facing presentation.
-//!
-//! [`AudisError`] is what engineers see. [`UserFacingError`] is what the UI
-//! renders: no stack traces, no developer paths, and always an explicit
-//! statement of whether the user's data survived.
 
 use std::path::PathBuf;
 
@@ -12,8 +8,6 @@ use serde::{Deserialize, Serialize};
 pub type Result<T, E = AudisError> = std::result::Result<T, E>;
 
 /// Error type for the shared layer.
-///
-/// Domain crates define their own error types and map into this at the boundary.
 #[derive(Debug, thiserror::Error)]
 pub enum AudisError {
     /// A setting or environment value could not be understood.
@@ -56,7 +50,6 @@ pub enum AudisError {
 }
 
 /// A stable code shown to users and written to logs, so support can map a
-/// report back to a call site without asking for a stack trace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DiagnosticCode {
@@ -94,8 +87,6 @@ pub struct UserFacingError {
     /// Plain explanation with no jargon.
     pub explanation: String,
     /// Whether the user's data survived. Required, never implied: the worst
-    /// outcome for a recording tool is a user believing a failure destroyed an
-    /// hour of audio when it did not.
     pub data_preserved: bool,
     /// The most useful thing the user can do next.
     pub suggested_action: String,
@@ -107,12 +98,7 @@ pub struct UserFacingError {
 
 impl AudisError {
     /// Translate an error into the message a user should read.
-    ///
-    /// Takes `&self` because `io::Error` is not `Clone` and serialising must
-    /// not consume the error.
     pub fn to_user_facing(&self) -> UserFacingError {
-        // Display rather than Debug: Debug on an io::Error surfaces OS paths
-        // that are noise in a support ticket.
         let technical_details = Some(self.to_string());
 
         match self {
@@ -177,7 +163,6 @@ impl From<AudisError> for UserFacingError {
 
 impl serde::Serialize for AudisError {
     /// Errors returned from commands serialise as [`UserFacingError`], so an
-    /// internal message cannot reach the UI by accident.
     fn serialize<S: serde::Serializer>(
         &self,
         serializer: S,
@@ -213,8 +198,6 @@ mod tests {
             assert!(!shown.title.is_empty());
             assert!(!shown.explanation.is_empty());
             assert!(!shown.suggested_action.is_empty());
-            // Nothing in this layer destroys user data, so all of these must
-            // reassure rather than alarm.
             assert!(shown.data_preserved);
         }
     }

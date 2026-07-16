@@ -53,7 +53,6 @@ describe("ProvidersView", () => {
       expect(saved).toEqual([{ id: "gemini", key: "sk-secret-abc123" }]);
     });
 
-    // The key must not linger in the DOM after being handed to Rust.
     await waitFor(() => {
       expect(field).toHaveValue("");
     });
@@ -75,14 +74,10 @@ describe("ProvidersView", () => {
 
     expect(screen.getByText("Key saved")).toBeInTheDocument();
 
-    // Whatever is on screen, nothing that looks like a key should be there.
-    // The backend cannot return one, so this guards the UI never inventing a
-    // preview from some other field.
     expect(container.textContent).not.toMatch(/sk-|AIza|key-[a-z0-9]/i);
 
     const field = screen.getByPlaceholderText(/A key is saved/);
     expect(field).toHaveValue("");
-    // A password field cannot be shoulder-surfed or caught in a recording.
     expect(field).toHaveAttribute("type", "password");
   });
 

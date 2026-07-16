@@ -1,9 +1,4 @@
 //! The audio test: run both captures and stream their levels to the UI.
-//!
-//! Level events are emitted on a timer at [`LEVEL_HZ`], never from the audio
-//! callback. The callback only stores numbers in atomics; this task reads them.
-//! Emitting per audio block would flood the WebView with thousands of events a
-//! second and stall the very thread that has to draw the meter.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -53,7 +48,6 @@ pub struct AudioTestStatus {
     /// Loopback stream, if it opened.
     pub computer_audio: Option<StreamStatus>,
     /// Why a stream failed, when one did. One source failing does not stop the
-    /// other: a missing microphone should not hide computer audio.
     pub microphone_error: Option<audis_common::UserFacingError>,
     /// Why loopback failed, when it did.
     pub computer_audio_error: Option<audis_common::UserFacingError>,
@@ -86,7 +80,6 @@ impl StreamStatus {
 pub struct AudioTestState {
     running: Mutex<Option<RunningTest>>,
     /// Tells the emitter task to stop. Separate from the mutex so the task
-    /// never has to take a lock the UI thread might hold.
     stop: std::sync::Arc<AtomicBool>,
 }
 
@@ -97,9 +90,6 @@ struct RunningTest {
 
 impl AudioTestState {
     /// Start both captures and begin emitting levels.
-    ///
-    /// Restarting while a test is running is fine: the previous one is stopped
-    /// first, which is what a device picker change does.
     pub fn start(
         &self,
         app: &AppHandle,
@@ -156,8 +146,6 @@ impl AudioTestState {
             .running
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        // Dropping the handles closes the streams and frees the devices, so
-        // another app can use the microphone again.
         *guard = None;
     }
 

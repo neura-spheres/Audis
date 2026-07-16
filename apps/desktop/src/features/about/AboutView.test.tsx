@@ -5,12 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { AboutView } from "./AboutView";
 import { AUDIS_APP_INFO_MOCK } from "@/test/fixtures";
 
-/**
- * Exercises the whole identity path: a mocked get_app_info, through the
- * validating IPC layer and useAppInfo, to the DOM. If the Rust payload and the
- * frontend schema disagree, this fails at the boundary rather than rendering
- * undefined.
- */
+/** Exercises the whole identity path: a mocked get_app_info, through the */
 describe("AboutView", () => {
   afterEach(() => {
     clearMocks();
@@ -27,7 +22,6 @@ describe("AboutView", () => {
     expect(await screen.findByRole("heading", { name: "Audis" })).toBeInTheDocument();
     expect(screen.getByText("Hear more. Understand faster.")).toBeInTheDocument();
     expect(screen.getByText("ai.neura.audis")).toBeInTheDocument();
-    // Publisher and company are both Neura Audis, so it appears twice.
     expect(screen.getAllByText("Neura Audis")).toHaveLength(2);
   });
 

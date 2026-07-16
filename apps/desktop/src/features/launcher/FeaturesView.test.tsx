@@ -31,7 +31,6 @@ describe("FeaturesView", () => {
   });
 
   /// A blocked feature must not be startable: discovering the model is missing
-  /// after committing to a session is the failure this prevents.
   it("disables starting a feature that is not ready, and says why", async () => {
     mockFeatures();
     render(<FeaturesView onNavigate={() => undefined} />);
@@ -54,7 +53,6 @@ describe("FeaturesView", () => {
   });
 
   /// The whole point of the launcher. A Start button that navigates instead of
-  /// starting is the bug this pins.
   it("actually starts a session when Start is clicked", async () => {
     const started: unknown[] = [];
     mockIPC(
@@ -88,7 +86,6 @@ describe("FeaturesView", () => {
       expect(started).toEqual([{ feature: "liveCaption" }]);
     });
 
-    // Once running, the same card must offer Stop rather than a second Start.
     expect(await screen.findByRole("button", { name: "Stop Live Caption" })).toBeInTheDocument();
   });
 
@@ -129,7 +126,6 @@ describe("FeaturesView", () => {
     render(<FeaturesView onNavigate={() => undefined} />);
     await screen.findByText("Meeting Assistant");
 
-    // Meeting Assistant uses cloud AI; Live Caption does not.
     expect(screen.getAllByText("Uses cloud AI")).toHaveLength(1);
   });
 });

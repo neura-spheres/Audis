@@ -1,7 +1,4 @@
 //! The catalogue of local speech models Audis can install.
-//!
-//! Models are downloaded on demand rather than bundled, so the installer stays
-//! small and a user only pays for the one they actually use.
 
 use serde::{Deserialize, Serialize};
 
@@ -40,10 +37,6 @@ pub struct ModelInfo {
     /// Whether Audis recommends this one.
     pub recommended: bool,
     /// Whether this model can decode speech faster than it arrives.
-    ///
-    /// The property that decides whether a model is usable at all for live
-    /// captions: below real time it keeps up, above it the captions fall
-    /// further behind every sentence until they are worthless.
     pub keeps_up_live: bool,
 }
 
@@ -67,11 +60,7 @@ impl ModelId {
     }
 
     /// Where this model is downloaded from.
-    ///
-    /// Separate from `info` so that downloading, which has nothing to do with
-    /// language, does not have to invent one to ask for.
     pub fn url(self) -> String {
-        // ggerganov's official whisper.cpp model host.
         format!(
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{}",
             self.file_name()
@@ -79,48 +68,21 @@ impl ModelId {
     }
 
     /// The model to recommend for `language`.
-    ///
-    /// Whisper's training is overwhelmingly English, and the smaller models pay
-    /// for that unevenly: Base is genuinely good at English and genuinely poor
-    /// at Indonesian, where it misreads ordinary words. Recommending one model
-    /// for both languages meant recommending the wrong one to every Indonesian
-    /// speaker, which is exactly the group Audis is for.
     pub fn recommended_for(language: crate::language::Language) -> Self {
-        // Base for both, and for Indonesian that is a compromise rather than a
-        // happy answer. Small and Medium really are more accurate at
-        // Indonesian, and neither can decode faster than people speak: measured
-        // on a 12-core CPU, Medium runs at 4.85x real time and Small lands near
-        // 2x, against Base's 0.61x. A model that falls permanently behind is
-        // not a better transcript, it is no transcript. `keeps_up_live` is what
-        // says so on the page rather than leaving the user to discover it.
         let _ = language;
         Self::WhisperBase
     }
 
     /// Whether this model decodes faster than speech arrives.
-    ///
-    /// Measured on a 12-core desktop CPU with a release build and greedy
-    /// decoding. A slower machine will do worse, so this is optimistic by
-    /// design: it must never promise real time to someone who will not get it.
     pub fn keeps_up_live(self) -> bool {
         match self {
-            // 0.61x real time measured; Tiny is faster still.
             Self::WhisperTiny | Self::WhisperBase => true,
-            // Small ~2x, Medium 4.85x measured. Both fall behind permanently.
             Self::WhisperSmall | Self::WhisperMedium => false,
         }
     }
 
     /// Catalogue entry, as described for someone recognising `language`.
-    ///
-    /// Sizes are the published sizes of the ggml builds. They are used for the
-    /// progress bar and the "this will use N MB" warning, so they are close
-    /// enough to be honest without being load-bearing: the real size comes from
-    /// the response's Content-Length.
     pub fn info(self, language: crate::language::Language) -> ModelInfo {
-        // Summaries say what each model is actually like in each language
-        // rather than averaging them into a comfortable half-truth. Base used
-        // to claim it "handles Indonesian and English well"; it does not.
         let (name, summary, size_bytes, requirement) = match self {
             Self::WhisperTiny => (
                 "Whisper Tiny",
@@ -231,13 +193,6 @@ mod tests {
     }
 
     /// Audis must never claim Base is good at Indonesian. It is not: it misreads
-    /// ordinary words, and the old summary promising it "handles Indonesian and
-    /// English well" is what sent Indonesian speakers to a bad experience while
-    /// telling them it was the right choice.
-    ///
-    /// It is still what gets recommended, because it is the only model that
-    /// decodes faster than people speak. That is a compromise, not a claim, and
-    /// the honest summary is what carries the difference.
     #[test]
     fn base_is_never_described_as_good_at_indonesian() {
         let base = ModelId::WhisperBase.info(Language::Indonesian);
@@ -253,12 +208,6 @@ mod tests {
     }
 
     /// A model is only recommendable if it can keep up with live speech.
-    ///
-    /// Small and Medium are genuinely more accurate at Indonesian, and both
-    /// decode slower than people talk (measured: Medium at 4.85x real time,
-    /// Small near 2x, against Base's 0.61x). Recommending one would trade a
-    /// mediocre transcript for captions that fall permanently behind, which is
-    /// not a better transcript but no transcript.
     #[test]
     fn only_a_model_that_keeps_up_is_ever_recommended() {
         for language in [Language::English, Language::Indonesian] {

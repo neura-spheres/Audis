@@ -1,8 +1,4 @@
 //! User settings.
-//!
-//! Versioned so a future release can migrate an old file instead of discarding
-//! it. Every field has a default, so a settings file that is partly corrupt
-//! still loads with the readable parts intact.
 
 use serde::{Deserialize, Serialize};
 
@@ -70,9 +66,6 @@ impl Default for GeneralSettings {
 }
 
 /// Which devices to capture from.
-///
-/// `None` means "whatever Windows calls the default", which is what most people
-/// want and what survives plugging in a headset mid-session.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AudioSettings {
@@ -83,12 +76,6 @@ pub struct AudioSettings {
 }
 
 /// What actually recognises speech.
-///
-/// The one setting in Audis that changes where your voice goes. Local keeps
-/// audio on this PC and always works; a provider sends it over the internet in
-/// exchange for accuracy no local model on a normal CPU can match. Because that
-/// is a real trade rather than a preference, it is a single explicit choice
-/// rather than something inferred from which model happens to be installed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum TranscriptionEngine {
@@ -108,9 +95,6 @@ pub enum TranscriptionEngine {
 
 impl Default for TranscriptionEngine {
     fn default() -> Self {
-        // Local by default, always. Audis' promise is that it works offline
-        // with no account, and a default that quietly uploaded audio would
-        // break that before the user had chosen anything.
         Self::Local {
             model: crate::models::ModelId::WhisperBase,
         }
@@ -131,15 +115,8 @@ pub struct TranscriptionSettings {
     /// What recognises speech: a local model, or a cloud provider.
     pub engine: TranscriptionEngine,
     /// Which local model to use.
-    ///
-    /// Kept alongside `engine` so switching to a provider and back remembers
-    /// the model you had, rather than silently resetting it.
     pub model: crate::models::ModelId,
     /// Which language to recognise.
-    ///
-    /// Always set, never detected: Audis supports exactly two languages, so
-    /// telling the engine which one removes a failure mode rather than adding
-    /// a setting.
     pub language: crate::language::Language,
     /// Capture the microphone.
     pub capture_microphone: bool,
@@ -188,9 +165,6 @@ impl Default for CaptionSettings {
 }
 
 /// Global shortcuts, as accelerator strings such as `CmdOrCtrl+Shift+A`.
-///
-/// `None` means unbound. Every one is optional: a shortcut that collides with
-/// something the user needs is worse than no shortcut.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ShortcutSettings {
@@ -215,6 +189,57 @@ impl Default for ShortcutSettings {
     }
 }
 
+/// What kind of session the assistant is helping with.
+///
+/// Shapes how it answers: an interview wants suggested answers for the user, a
+/// quiz wants the correct answer, a meeting wants concise facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AssistantContext {
+    /// A general conversation.
+    #[default]
+    General,
+    /// A meeting.
+    Meeting,
+    /// A job interview, where the user is the candidate.
+    Interview,
+    /// A quiz or test.
+    Quiz,
+    /// A lecture or class.
+    Lecture,
+}
+
+/// The AI assistant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AssistantSettings {
+    /// Whether the assistant answers questions during a session.
+    pub enabled: bool,
+    /// Which provider answers.
+    pub provider: crate::providers::ProviderId,
+    /// The provider's chat model.
+    pub model: String,
+    /// What kind of session this is.
+    pub context: AssistantContext,
+    /// Free-text notes describing the session, sent to the assistant.
+    pub notes: String,
+    /// Also answer questions the user asks with their own microphone.
+    pub answer_own_questions: bool,
+}
+
+impl Default for AssistantSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: crate::providers::ProviderId::Gemini,
+            model: crate::providers::ProviderId::Gemini.chat().default_model,
+            context: AssistantContext::default(),
+            notes: String::new(),
+            answer_own_questions: false,
+        }
+    }
+}
+
 /// Root settings object.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -231,9 +256,9 @@ pub struct Settings {
     pub captions: CaptionSettings,
     /// Global shortcuts.
     pub shortcuts: ShortcutSettings,
+    /// The AI assistant.
+    pub assistant: AssistantSettings,
     /// Configured AI providers.
-    ///
-    /// Holds credential references, never keys. See `providers::ProviderConfig`.
     pub providers: Vec<crate::providers::ProviderConfig>,
 }
 
@@ -246,6 +271,7 @@ impl Default for Settings {
             transcription: TranscriptionSettings::default(),
             captions: CaptionSettings::default(),
             shortcuts: ShortcutSettings::default(),
+            assistant: AssistantSettings::default(),
             providers: Vec::new(),
         }
     }
@@ -265,7 +291,6 @@ mod tests {
     }
 
     /// Settings must never carry a secret: they are written to a plain JSON
-    /// file that gets copied into support bundles.
     #[test]
     fn settings_never_serialise_an_api_key() {
         let mut settings = Settings::default();
@@ -289,8 +314,6 @@ mod tests {
     }
 
     /// Audis' promise is that it works offline with no account. A default that
-    /// uploaded audio would break that before the user chose anything, so the
-    /// default engine is local and this test is what keeps it that way.
     #[test]
     fn speech_never_leaves_this_pc_by_default() {
         let settings = Settings::default();
@@ -324,7 +347,6 @@ mod tests {
         assert!(ProviderId::Groq.can_transcribe());
         assert!(ProviderId::Gemini.can_transcribe());
         assert!(ProviderId::OpenAiCompatible.can_transcribe());
-        // Neither has an audio API at all.
         assert!(!ProviderId::Anthropic.can_transcribe());
         assert!(!ProviderId::DeepSeek.can_transcribe());
     }
@@ -341,8 +363,6 @@ mod tests {
     }
 
     /// A settings file written by an older build will be missing fields added
-    /// later. Those must fall back to defaults rather than failing the load and
-    /// resetting everything the user configured.
     #[test]
     fn missing_fields_fall_back_to_defaults() {
         let parsed: Settings = serde_json::from_str("{}").expect("empty object must load");
@@ -351,7 +371,6 @@ mod tests {
         let partial: Settings =
             serde_json::from_str(r#"{"general":{"theme":"dark"}}"#).expect("partial must load");
         assert_eq!(partial.general.theme, ThemePreference::Dark);
-        // Untouched fields keep their defaults.
         assert_eq!(
             partial.general.close_behavior,
             CloseBehavior::MinimizeToTray

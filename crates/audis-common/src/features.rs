@@ -1,9 +1,4 @@
 //! The feature catalogue.
-//!
-//! One list, in Rust, describing every capability Audis offers and whether it
-//! is actually usable in this build. The Features view renders this rather than
-//! hardcoding its own copy, so the UI cannot claim a feature works when it does
-//! not.
 
 use serde::{Deserialize, Serialize};
 
@@ -63,19 +58,11 @@ impl FeatureId {
     ];
 
     /// True when this feature sends transcript text to an AI provider.
-    ///
-    /// Drives both the "Uses cloud AI" badge and whether a provider key is
-    /// required to start, so the badge cannot promise something the launcher
-    /// then contradicts.
     pub fn uses_cloud_ai(self) -> bool {
         matches!(self, Self::MeetingAssistant | Self::InterviewPractice)
     }
 
     /// True when this feature writes a transcript to disk.
-    ///
-    /// Live Caption's promise is literally "No transcript is written to disk",
-    /// so this is what enforces it. The session pipeline never constructs a
-    /// writer when this is false, rather than writing a file and hiding it.
     pub fn persists_transcript(self) -> bool {
         match self {
             Self::LiveCaption => false,
@@ -84,7 +71,6 @@ impl FeatureId {
     }
 
     /// Static description. Status is decided at runtime by the app, which knows
-    /// whether a model is installed and a device exists.
     pub fn describe(self) -> (&'static str, &'static str, &'static [&'static str]) {
         match self {
             Self::LiveCaption => (
@@ -170,9 +156,6 @@ mod tests {
     }
 
     /// Live Caption's description promises, in as many words, that nothing is
-    /// written to disk. Privacy claims are the ones users cannot verify for
-    /// themselves, so the promise and the behaviour are pinned to each other
-    /// here: changing either alone fails this test.
     #[test]
     fn live_caption_promises_no_transcript_and_writes_none() {
         let (_, summary, details) = FeatureId::LiveCaption.describe();
@@ -194,12 +177,6 @@ mod tests {
     }
 
     /// The mirror image: a feature that advertises a saved transcript must
-    /// actually save one, or the launcher is selling something absent.
-    ///
-    /// Spelled out per feature rather than inferred from the prose. The first
-    /// version of this searched descriptions for "saved" and matched Live
-    /// Caption's "Nothing is saved", asserting the exact opposite of the
-    /// promise. Which mode saves is a decision, so it is written as one.
     #[test]
     fn every_feature_advertising_a_transcript_writes_one() {
         assert!(

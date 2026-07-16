@@ -3,9 +3,6 @@
 use serde::{Deserialize, Serialize};
 
 /// Which part of the data directory a file belongs to.
-///
-/// Derived from the file's location rather than its extension, so the UI can
-/// group files without guessing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DataCategory {
@@ -99,7 +96,6 @@ impl DataCategory {
 #[serde(rename_all = "camelCase")]
 pub struct DataFile {
     /// Absolute path. The frontend passes this back to open or reveal the file,
-    /// and Rust re-checks that it is inside the data root before acting.
     pub path: String,
     /// Path relative to the data root, for display.
     pub relative_path: String,
@@ -136,7 +132,6 @@ pub struct DataFileListing {
     /// Absolute path of the data root.
     pub root: String,
     /// One entry per category, including empty ones so the UI can show the
-    /// full shape of the storage layout.
     pub groups: Vec<DataCategoryGroup>,
     /// Total bytes across every category.
     pub total_bytes: u64,

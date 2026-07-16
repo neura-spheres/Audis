@@ -2,14 +2,7 @@ import type { ReactNode } from "react";
 
 import { ConstructionIcon } from "@/components/icons";
 
-/**
- * Placeholder for a section whose backend does not exist yet.
- *
- * It states plainly that the feature is not built and lists what will live
- * here, rather than showing controls that look real and do nothing. A dead
- * toggle is worse than an empty page: it makes the user doubt the parts that
- * do work.
- */
+/** Placeholder for a section whose backend does not exist yet. */
 interface NotBuiltYetProps {
   /** What this section will do, in one sentence. */
   summary: string;

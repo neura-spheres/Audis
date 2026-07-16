@@ -1,11 +1,6 @@
 import type { ReactNode } from "react";
 
-/**
- * The inset grouped list from macOS System Settings: a titled group of rows on
- * a raised surface, divided by hairlines. This is the workhorse layout for
- * settings and detail panes, kept as a component so every surface inherits the
- * same rhythm instead of each view inventing its own spacing.
- */
+/** The inset grouped list from macOS System Settings: a titled group of rows on */
 
 interface GroupedListProps {
   /** Group heading, rendered above the surface in secondary text. */
@@ -53,21 +48,11 @@ interface RowProps {
   value?: ReactNode;
   /** Secondary line under the label. */
   description?: ReactNode;
-  /**
-   * Stack the value under the label instead of beside it. Use for long values
-   * such as file paths, which have no sensible truncation point.
-   */
+  /** Stack the value under the label instead of beside it. Use for long values */
   stacked?: boolean;
 }
 
-/**
- * One row. Rows draw their own top hairline rather than the parent inserting
- * dividers, so the first row is automatically clean and callers can compose
- * rows conditionally without tracking indices.
- *
- * Both columns carry `min-w-0`. Without it a long unbroken value (a Windows
- * path, say) refuses to shrink and pushes itself outside the card.
- */
+/** One row. Rows draw their own top hairline rather than the parent inserting */
 export function Row({ label, value, description, stacked = false }: RowProps) {
   if (stacked) {
     return (

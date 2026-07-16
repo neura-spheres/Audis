@@ -1,9 +1,4 @@
 //! Shared foundation for Audis.
-//!
-//! Base of the dependency graph: product identity, on-disk layout, error
-//! presentation and IPC contracts. Knows nothing about audio devices, ASR
-//! engines, providers or Tauri, which is what lets the higher layers stay
-//! testable without a desktop shell.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::all)]
@@ -29,10 +24,12 @@ pub use language::Language;
 pub use models::{InstalledModel, ModelDownloadProgress, ModelId, ModelInfo};
 pub use paths::AppPaths;
 pub use providers::{
-    ProviderConfig, ProviderId, ProviderInfo, ProviderStatus, SpeechApi, SpeechSupport,
+    ChatApi, ChatSupport, ProviderConfig, ProviderId, ProviderInfo, ProviderStatus, SpeechApi,
+    SpeechSupport,
 };
 pub use session::{SessionMode, SessionState, SessionStatus};
 pub use settings::{
-    AudioSettings, CaptionSettings, Settings, TranscriptionEngine, TranscriptionSettings,
+    AssistantContext, AssistantSettings, AudioSettings, CaptionSettings, Settings,
+    TranscriptionEngine, TranscriptionSettings,
 };
 pub use transcript::{AsrState, AsrStatus, TranscriptSegment};

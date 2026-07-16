@@ -9,12 +9,7 @@ describe("IPC boundary", () => {
     clearMocks();
   });
 
-  /**
-   * Regression: Tauri serialises Rust's `()` as JSON `null`, and a `z.void()`
-   * schema rejects `null`. Every command returning nothing therefore resolved
-   * as a failure even though Rust had done the work: the API key was saved to
-   * the keystore and the UI still reported an error and kept the key on screen.
-   */
+  /** Regression: Tauri serialises Rust's `()` as JSON `null`, and a `z.void()` */
   describe("commands that return nothing", () => {
     it("treat a null result as success, because that is what Rust sends", async () => {
       mockIPC(() => null);
@@ -48,7 +43,6 @@ describe("IPC boundary", () => {
     });
 
     /// A Rust rename that the frontend has not caught up with must fail loudly
-    /// here rather than letting undefined reach a component.
     it("reject a payload that does not match the schema", async () => {
       mockIPC(() => ({ appName: "Audis" }));
 

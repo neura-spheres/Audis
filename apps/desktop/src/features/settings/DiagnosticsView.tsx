@@ -60,13 +60,7 @@ export function DiagnosticsView() {
   );
 }
 
-/**
- * A long filesystem path with a reveal action.
- *
- * Paths are shown in full and wrap, rather than truncating: a path the user
- * cannot read is useless, and truncating the middle of a Windows path usually
- * hides the part that matters.
- */
+/** A long filesystem path with a reveal action. */
 function PathValue({ path }: { path: string | undefined }) {
   if (!path) return <span style={{ color: "var(--label-tertiary)" }}>Unknown</span>;
 

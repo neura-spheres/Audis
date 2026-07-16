@@ -7,11 +7,6 @@ use crate::ipc::AudioSourceKind;
 use crate::language::Language;
 
 /// One piece of recognised speech.
-///
-/// A segment is either interim (`is_final == false`), meaning the engine may
-/// still change it, or final, meaning it will not. Only final segments are
-/// persisted; storing every interim hypothesis would fill the database with
-/// text the engine itself already discarded.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptSegment {
@@ -46,10 +41,6 @@ impl TranscriptSegment {
     }
 
     /// True when there are no actual words.
-    ///
-    /// Whisper emits bracketed annotations such as `[BLANK_AUDIO]` or
-    /// `(music)` for non-speech. Those are not transcript and must never reach
-    /// a caption.
     pub fn is_empty_speech(&self) -> bool {
         let trimmed = self.text.trim();
         if trimmed.is_empty() {

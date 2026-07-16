@@ -3,13 +3,7 @@ import { SegmentedControl, Switch } from "@/components/controls";
 import { useSettings } from "@/hooks/useSettings";
 import type { CaptionSettings } from "@/schemas/ipc";
 
-/**
- * How captions look on screen.
- *
- * Every control here changes the overlay immediately, in the window it is
- * actually rendered in, so the effect of a choice is visible while making it
- * rather than after a restart.
- */
+/** How captions look on screen. */
 export function CaptionsView() {
   const { settings, error, update } = useSettings();
 
@@ -104,13 +98,7 @@ export function CaptionsView() {
   );
 }
 
-/**
- * A live sample.
- *
- * Rendered with the same rules as the real overlay, over a checkerboard that
- * stands in for whatever is behind it, so the background setting can be judged
- * here rather than by starting a session and hoping.
- */
+/** A live sample. */
 function CaptionPreview({ captions }: { captions: CaptionSettings }) {
   const opacity = captions.backgroundOpacity / 100;
   const hasPanel = opacity > 0.01;
@@ -120,8 +108,6 @@ function CaptionPreview({ captions }: { captions: CaptionSettings }) {
       className="flex items-center justify-center overflow-hidden p-6"
       style={{
         borderRadius: "var(--radius-card)",
-        // A busy backdrop: a caption that only looks right on flat grey is not
-        // one that works over a video call.
         background:
           "repeating-conic-gradient(#3a3f47 0% 25%, #22262c 0% 50%) 50% / 24px 24px, linear-gradient(120deg, #1f6feb33, #d2a8ff33)",
         minHeight: 130,

@@ -1,14 +1,8 @@
 //! AI provider identity and configuration.
-//!
-//! Keys are never in this file, or any file. Settings hold a reference; the
-//! secret itself lives in the OS keystore. See ADR-006.
 
 use serde::{Deserialize, Serialize};
 
 /// An AI provider Audis can talk to.
-///
-/// Chosen for cost: every one of these has either a free tier or pricing far
-/// below OpenAI's, which matters for a tool that runs all day.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ProviderId {
@@ -45,19 +39,10 @@ pub struct ProviderInfo {
     /// True when the endpoint is user-supplied rather than fixed.
     pub needs_endpoint: bool,
     /// How this provider transcribes speech, or `None` if it cannot.
-    ///
-    /// Carried here so the Transcription page can offer only the providers that
-    /// can actually hear, rather than the frontend keeping its own list that
-    /// would drift from `speech()`.
     pub speech: Option<SpeechSupport>,
 }
 
 /// The shape of a provider's speech-to-text API.
-///
-/// Two shapes cover the field. Most services copied OpenAI's transcription
-/// endpoint, so one client speaks to Groq, OpenAI and a local whisper server
-/// alike. Gemini is a general model that happens to accept audio, so it needs
-/// its own request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SpeechApi {
@@ -83,6 +68,32 @@ pub struct SpeechSupport {
     pub summary: String,
 }
 
+/// The shape of a provider's chat API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChatApi {
+    /// `POST /chat/completions`, as OpenAI defined it.
+    OpenAiChat,
+    /// Gemini's `generateContent`.
+    GeminiGenerate,
+    /// Anthropic's `POST /messages`.
+    AnthropicMessages,
+}
+
+/// How a provider holds a conversation, for the assistant.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatSupport {
+    /// Which request shape to use.
+    pub api: ChatApi,
+    /// Base URL, or `None` when the user supplies the endpoint.
+    pub base_url: Option<String>,
+    /// The model used unless the user picks another.
+    pub default_model: String,
+    /// Models known to work for chat.
+    pub models: Vec<String>,
+}
+
 impl ProviderId {
     /// Every provider, best default first.
     pub const ALL: [Self; 5] = [
@@ -94,8 +105,6 @@ impl ProviderId {
     ];
 
     /// The keystore entry name for this provider's key.
-    ///
-    /// A reference like this is what goes in settings; the value never does.
     pub fn credential_ref(self) -> String {
         format!("provider/{}/default", self.slug())
     }
@@ -112,17 +121,6 @@ impl ProviderId {
     }
 
     /// How this provider transcribes speech, or `None` if it cannot.
-    ///
-    /// Being an AI provider does not make a service a speech recogniser:
-    /// Anthropic and DeepSeek have no audio input at all, and offering them in
-    /// a speech picker would only produce a confusing failure at the point the
-    /// user starts talking.
-    ///
-    /// This is the answer to Whisper Base's weak Indonesian. Groq serves
-    /// `whisper-large-v3`, which is the model that actually gets Indonesian
-    /// right, on hardware fast enough to keep ahead of live speech — something
-    /// no local model on a normal CPU can do. It costs an internet connection
-    /// and sending audio off this PC, which is the user's decision to make.
     pub fn speech(self) -> Option<SpeechSupport> {
         match self {
             Self::Groq => Some(SpeechSupport {
@@ -152,9 +150,6 @@ impl ProviderId {
             }),
             Self::OpenAiCompatible => Some(SpeechSupport {
                 api: SpeechApi::OpenAiTranscriptions,
-                // Supplied by the user: this is how OpenAI itself is reached
-                // (https://api.openai.com/v1), and equally a whisper server on
-                // this machine.
                 base_url: None,
                 default_model: "whisper-1".to_owned(),
                 models: vec![
@@ -167,8 +162,6 @@ impl ProviderId {
                           accurate, or point it at a whisper server on your own network."
                     .to_owned(),
             }),
-            // Neither accepts audio. Offering them would be a promise the API
-            // cannot keep.
             Self::DeepSeek | Self::Anthropic => None,
         }
     }
@@ -176,6 +169,50 @@ impl ProviderId {
     /// True when this provider can transcribe speech.
     pub fn can_transcribe(self) -> bool {
         self.speech().is_some()
+    }
+
+    /// How this provider holds a conversation for the assistant.
+    ///
+    /// Every provider can chat, so this is never `None`.
+    pub fn chat(self) -> ChatSupport {
+        match self {
+            Self::Gemini => ChatSupport {
+                api: ChatApi::GeminiGenerate,
+                base_url: Some("https://generativelanguage.googleapis.com/v1beta".to_owned()),
+                default_model: "gemini-2.0-flash".to_owned(),
+                models: vec!["gemini-2.0-flash".to_owned(), "gemini-2.5-flash".to_owned()],
+            },
+            Self::Groq => ChatSupport {
+                api: ChatApi::OpenAiChat,
+                base_url: Some("https://api.groq.com/openai/v1".to_owned()),
+                default_model: "llama-3.3-70b-versatile".to_owned(),
+                models: vec![
+                    "llama-3.3-70b-versatile".to_owned(),
+                    "llama-3.1-8b-instant".to_owned(),
+                ],
+            },
+            Self::DeepSeek => ChatSupport {
+                api: ChatApi::OpenAiChat,
+                base_url: Some("https://api.deepseek.com".to_owned()),
+                default_model: "deepseek-chat".to_owned(),
+                models: vec!["deepseek-chat".to_owned(), "deepseek-reasoner".to_owned()],
+            },
+            Self::Anthropic => ChatSupport {
+                api: ChatApi::AnthropicMessages,
+                base_url: Some("https://api.anthropic.com/v1".to_owned()),
+                default_model: "claude-3-5-haiku-latest".to_owned(),
+                models: vec![
+                    "claude-3-5-haiku-latest".to_owned(),
+                    "claude-3-5-sonnet-latest".to_owned(),
+                ],
+            },
+            Self::OpenAiCompatible => ChatSupport {
+                api: ChatApi::OpenAiChat,
+                base_url: None,
+                default_model: "gpt-4o-mini".to_owned(),
+                models: vec!["gpt-4o-mini".to_owned(), "gpt-4o".to_owned()],
+            },
+        }
     }
 
     /// Catalogue entry.
@@ -244,9 +281,6 @@ impl ProviderId {
 }
 
 /// A provider's configuration, as stored in settings.
-///
-/// Note what is absent: the key. Only [`Self::credential_ref`] is here, and it
-/// names an entry in the OS keystore.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderConfig {

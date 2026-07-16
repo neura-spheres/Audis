@@ -1,15 +1,4 @@
 //! Windows data directory layout.
-//!
-//! ```text
-//! %LOCALAPPDATA%\NeuraAudis\Audis\
-//!     database\audis.db
-//!     sessions\  recordings\  models\  cache\
-//!     logs\      updates\     exports\ temp\
-//! ```
-//!
-//! Everything lives under `%LOCALAPPDATA%` rather than `%APPDATA%`: recordings
-//! and models are large and machine-specific, and roaming them onto a domain
-//! profile would be hostile. `%APPDATA%` is reserved for small roaming prefs.
 
 use std::path::{Path, PathBuf};
 
@@ -24,9 +13,6 @@ pub struct AppPaths {
 
 impl AppPaths {
     /// Resolve the data root from the environment.
-    ///
-    /// `AUDIS_DATA_DIR` overrides the default, which supports portable installs
-    /// and lets tests run against a scratch directory.
     pub fn discover() -> Result<Self> {
         if let Some(overridden) = std::env::var_os(format!("{ENV_PREFIX}DATA_DIR")) {
             let path = PathBuf::from(overridden);
@@ -105,7 +91,6 @@ impl AppPaths {
     }
 
     /// Scratch space for write-then-rename. Kept on the data volume so the
-    /// rename stays atomic.
     pub fn temp_dir(&self) -> PathBuf {
         self.root.join("temp")
     }
@@ -139,9 +124,6 @@ impl AppPaths {
     }
 
     /// Directory for one session's files.
-    ///
-    /// Takes a `Uuid` rather than a string so a caller cannot smuggle `../`
-    /// into the path.
     pub fn session_dir(&self, session_id: uuid::Uuid) -> PathBuf {
         self.sessions_dir().join(session_id.to_string())
     }

@@ -8,14 +8,7 @@ import { useSession } from "@/hooks/useSession";
 import type { Feature, UserFacingError } from "@/schemas/ipc";
 import type { ViewId } from "@/app/navigation";
 
-/**
- * The launcher: everything Audis can do, and whether it can do it right now.
- *
- * Status comes from Rust, which checks what is actually on this machine, so a
- * feature is offered as Ready only when its model and keys genuinely exist. A
- * blocked feature says what is missing and links to the page that fixes it,
- * rather than failing after the user commits to starting a session.
- */
+/** The launcher: everything Audis can do, and whether it can do it right now. */
 export function FeaturesView({ onNavigate }: { onNavigate: (id: ViewId) => void }) {
   const [features, setFeatures] = useState<Feature[]>();
   const [error, setError] = useState<UserFacingError>();
@@ -50,7 +43,6 @@ export function FeaturesView({ onNavigate }: { onNavigate: (id: ViewId) => void 
             feature={feature}
             onNavigate={onNavigate}
             running={session?.mode === feature.id}
-            // One session at a time: two would fight over the microphone.
             blockedByOther={session !== null && session.mode !== feature.id}
             starting={starting}
             onStart={() => void start(feature.id)}
@@ -149,8 +141,6 @@ function FeatureCard({
             {feature.blocker}
           </p>
           <div className="flex gap-2">
-            {/* Send the user to the page that actually resolves the blocker,
-                rather than making them work out where to go. */}
             <Button onClick={() => onNavigate(blockerDestination(feature.blocker))}>
               {feature.blocker.includes("Models") ? "Open Models" : "Open Providers"}
             </Button>
@@ -168,9 +158,6 @@ function FeatureCard({
             variant={ready ? "accent" : "standard"}
             disabled={!ready || starting || blockedByOther}
             onClick={onStart}
-            // The tooltip explains why it is disabled, but the accessible name
-            // must stay the action itself, or a screen reader announces the
-            // blocker text as the button's name.
             title={
               blockedByOther
                 ? "Stop the running session first."
@@ -220,7 +207,6 @@ function StatusChip({ status }: { status: Feature["status"] }) {
   const { label, colour } = palette[status];
 
   return (
-    // Text as well as colour, so the status still reads without colour vision.
     <span className="text-caption2 font-medium" style={{ color: colour }}>
       {label}
     </span>

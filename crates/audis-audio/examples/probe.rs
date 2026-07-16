@@ -1,9 +1,4 @@
 //! Manual hardware check: enumerate devices, then capture from the default
-//! microphone and the default output (loopback) for a few seconds and print
-//! live levels.
-//!
-//! Run with `cargo run -p audis-audio --example probe`. Play some audio while
-//! it runs and the computer-audio meter should move.
 
 fn main() {
     let devices = match audis_audio::enumerate() {

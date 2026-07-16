@@ -1,18 +1,4 @@
 //! End-to-end recognition against the real Whisper engine.
-//!
-//! Everything else in this crate tests a stage in isolation with synthetic
-//! tones. That proves each stage does what it claims, but not that speech
-//! survives the whole chain: a resampler can pass a sine-wave test and still
-//! smear consonants, and only a real decode catches that.
-//!
-//! Ignored by default. It needs a ~148 MB model and takes seconds, so it is not
-//! part of the normal gate. Run it deliberately:
-//!
-//! ```powershell
-//! $env:AUDIS_TEST_MODEL = "$env:LOCALAPPDATA\NeuraAudis\Audis\models\ggml-base.bin"
-//! $env:AUDIS_TEST_WAV = "path\to\speech.wav"
-//! cargo test -p audis-asr --test pipeline -- --ignored --nocapture
-//! ```
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
@@ -27,11 +13,6 @@ struct Wav {
 }
 
 /// Parse a 16-bit PCM WAV.
-///
-/// Deliberately minimal: chunks are walked rather than assumed at fixed
-/// offsets, because a WAV written by Windows TTS carries an extended `fmt `
-/// chunk and a `fact` chunk that a naive 44-byte-header reader would swallow as
-/// audio.
 fn read_wav(path: &std::path::Path) -> Wav {
     let bytes = std::fs::read(path).expect("read the wav");
     assert_eq!(&bytes[0..4], b"RIFF", "not a RIFF file");
@@ -66,7 +47,6 @@ fn read_wav(path: &std::path::Path) -> Wav {
             _ => {}
         }
 
-        // Chunks are word-aligned: an odd size is followed by a pad byte.
         cursor = body + size + (size % 2);
     }
 
@@ -99,9 +79,6 @@ fn real_speech_survives_the_whole_pipeline() {
     let mut endpointer = Endpointer::new(EndpointConfig::default());
     let mut text = String::new();
 
-    // Fed in small blocks, exactly as a capture callback delivers it. A
-    // resampler that only works on one big buffer would pass a naive test and
-    // click at every seam here.
     for block in wav.samples.chunks(1024) {
         let mono = audis_asr::downmix_to_mono(block, wav.channels);
         let ready = resampler.push(&mono);
@@ -116,8 +93,6 @@ fn real_speech_survives_the_whole_pipeline() {
                 .transcribe(&utterance, Language::English)
                 .expect("transcribe");
             let decode_ms = started.elapsed().as_millis() as i64;
-            // The number that decides whether a model is usable live: below 1.0
-            // it keeps up, above 1.0 captions fall further behind every sentence.
             println!(
                 "utterance {audio_ms}ms audio -> decoded in {decode_ms}ms (x{:.2} real time) -> {:?}",
                 decode_ms as f64 / audio_ms.max(1) as f64,
@@ -128,7 +103,6 @@ fn real_speech_survives_the_whole_pipeline() {
         }
     }
 
-    // Whatever was still buffered when the audio ended is real speech too.
     if let Some(utterance) = endpointer.flush() {
         let result = engine
             .transcribe(&utterance, Language::English)
@@ -140,8 +114,6 @@ fn real_speech_survives_the_whole_pipeline() {
     let heard = text.to_lowercase();
     println!("\nfull transcript: {heard}");
 
-    // Exact wording depends on the model, so this asserts on content words that
-    // any working chain must produce rather than on a golden string.
     for word in ["quick", "brown", "fox", "lazy", "dog"] {
         assert!(
             heard.contains(word),
@@ -151,8 +123,6 @@ fn real_speech_survives_the_whole_pipeline() {
 }
 
 /// The resampler must not invent or lose time.
-///
-/// Runs without a model, so it stays in the normal gate.
 #[test]
 fn resampling_preserves_duration_within_a_few_milliseconds() {
     let source_rate = 22_050;
@@ -168,8 +138,6 @@ fn resampling_preserves_duration_within_a_few_milliseconds() {
     let expected = 16_000 * seconds;
     let drift = (produced as i64 - expected as i64).abs();
 
-    // A few milliseconds of filter latency is expected; drift that grows with
-    // length is not, and would desynchronise every timestamp in a long meeting.
     assert!(
         drift < 16_000 / 20,
         "expected about {expected} samples, produced {produced} (drift {drift})"

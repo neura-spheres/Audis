@@ -1,13 +1,6 @@
 import { z } from "zod";
 
-/**
- * Runtime schemas for everything crossing the Rust/React boundary.
- *
- * TypeScript types are erased at runtime, so an annotation proves nothing about
- * what Rust actually sent. These schemas do. Without them a rename on the Rust
- * side surfaces as undefined deep inside a component instead of as an error at
- * the boundary.
- */
+/** Runtime schemas for everything crossing the Rust/React boundary. */
 
 /** Mirrors `DiagnosticCode` in audis-common. */
 export const diagnosticCodeSchema = z.enum([
@@ -110,15 +103,24 @@ export const providerConfigSchema = z.object({
   credentialRef: z.string(),
 });
 
-/**
- * Every field of Rust's `Settings` must appear here.
- *
- * `useSettings` sends the whole parsed object back on any change, and zod
- * strips keys it does not know about. A field missing here would therefore be
- * dropped on the way out and reset to its default by serde on the way in, so an
- * unrelated theme toggle would silently wipe the user's model choice and
- * provider list.
- */
+export const assistantContextSchema = z.enum([
+  "general",
+  "meeting",
+  "interview",
+  "quiz",
+  "lecture",
+]);
+
+export const assistantSettingsSchema = z.object({
+  enabled: z.boolean(),
+  provider: z.enum(["gemini", "deepSeek", "groq", "anthropic", "openAiCompatible"]),
+  model: z.string(),
+  context: assistantContextSchema,
+  notes: z.string(),
+  answerOwnQuestions: z.boolean(),
+});
+
+/** Every field of Rust's `Settings` must appear here. */
 export const settingsSchema = z.object({
   version: z.number().int(),
   general: generalSettingsSchema,
@@ -126,8 +128,12 @@ export const settingsSchema = z.object({
   transcription: transcriptionSettingsSchema,
   captions: captionSettingsSchema,
   shortcuts: shortcutSettingsSchema,
+  assistant: assistantSettingsSchema,
   providers: z.array(providerConfigSchema),
 });
+
+export type AssistantContext = z.infer<typeof assistantContextSchema>;
+export type AssistantSettings = z.infer<typeof assistantSettingsSchema>;
 
 /** Mirrors `DataCategory`. */
 export const dataCategorySchema = z.enum([
@@ -302,11 +308,7 @@ export const providerInfoSchema = z.object({
   speech: speechSupportSchema.nullable(),
 });
 
-/**
- * Mirrors `ProviderStatus`.
- *
- * Note there is no key field, by design: Rust reports only whether one exists.
- */
+/** Mirrors `ProviderStatus`. */
 export const providerStatusSchema = z.object({
   info: providerInfoSchema,
   hasKey: z.boolean(),
@@ -412,6 +414,21 @@ export type SessionStatus = z.infer<typeof sessionStatusSchema>;
 export type TranscriptSegment = z.infer<typeof transcriptSegmentSchema>;
 export type AsrState = z.infer<typeof asrStateSchema>;
 export type AsrStatus = z.infer<typeof asrStatusSchema>;
+
+/** Mirrors `SessionSummary`. */
+export const sessionSummarySchema = z.object({
+  id: z.string(),
+  mode: featureIdSchema,
+  language: languageSchema,
+  startedAt: z.string(),
+  endedAt: z.string().nullable(),
+  segmentCount: z.number().int().nonnegative(),
+  elapsedMs: z.number().int().nonnegative(),
+  complete: z.boolean(),
+});
+
+export type SessionSummary = z.infer<typeof sessionSummarySchema>;
+export type ExportFormat = "text" | "markdown" | "srt";
 
 export type DiagnosticCode = z.infer<typeof diagnosticCodeSchema>;
 export type UserFacingError = z.infer<typeof userFacingErrorSchema>;

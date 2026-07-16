@@ -1,15 +1,6 @@
 import type { AudioLevelEvent } from "@/schemas/ipc";
 
-/**
- * A signal-level meter.
- *
- * The bar tracks RMS because that is what "how loud is this" means to a
- * listener, while the thin marker tracks peak, which is what tells you whether
- * you are about to clip. Showing only one of the two would hide half the story.
- *
- * The scale is logarithmic. A linear meter spends most of its width on levels
- * nobody speaks at and leaves normal speech bunched near the left.
- */
+/** A signal-level meter. */
 export function LevelMeter({ level }: { level: AudioLevelEvent | undefined }) {
   const rms = toScale(level?.rms ?? 0);
   const peak = toScale(level?.peak ?? 0);
@@ -32,9 +23,6 @@ export function LevelMeter({ level }: { level: AudioLevelEvent | undefined }) {
             width: `${rms * 100}%`,
             background: clipping ? "var(--color-danger)" : "var(--color-success)",
             borderRadius: "var(--radius-chip)",
-            // No CSS transition: the meter already updates 25 times a second,
-            // and animating between frames would add visible lag to a control
-            // whose entire job is to feel immediate.
           }}
         />
         {peak > 0.01 ? (
@@ -51,12 +39,7 @@ export function LevelMeter({ level }: { level: AudioLevelEvent | undefined }) {
   );
 }
 
-/**
- * Map a 0..1 amplitude onto a 0..1 bar position using dBFS.
- *
- * -60 dB is the floor: quieter than that is inaudible and does not deserve
- * meter width.
- */
+/** Map a 0..1 amplitude onto a 0..1 bar position using dBFS. */
 const FLOOR_DB = -60;
 
 function toScale(amplitude: number): number {

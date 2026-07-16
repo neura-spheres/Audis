@@ -1,10 +1,4 @@
 //! Browsing the files Audis has written.
-//!
-//! The frontend receives absolute paths and passes one back to open or reveal
-//! it. That makes the path an untrusted input on the way back in, so
-//! [`resolve_inside_root`] re-checks every path against the data root before
-//! anything is opened. Canonicalising first means `..` segments, symlinks and
-//! short 8.3 names cannot be used to escape.
 
 use std::path::{Path, PathBuf};
 
@@ -13,15 +7,9 @@ use audis_common::{
 };
 
 /// Directories deeper than this are not walked.
-///
-/// Session folders are two or three levels at most. The cap stops a symlink
-/// loop or a pathological tree from hanging the UI.
 const MAX_DEPTH: usize = 8;
 
 /// Files returned per category.
-///
-/// Logs and recordings can pile up, and neither the IPC payload nor the list UI
-/// benefits from thousands of rows.
 const MAX_FILES_PER_CATEGORY: usize = 500;
 
 /// List every file under the data root, grouped by category.
@@ -36,8 +24,6 @@ pub fn list(paths: &AppPaths) -> Result<DataFileListing> {
         let mut files = Vec::new();
         collect(&dir, &root, category, 0, &mut files);
 
-        // Newest first: the file a user wants is almost always the last one
-        // written.
         files.sort_by(|a, b| b.modified.cmp(&a.modified).then(a.name.cmp(&b.name)));
         files.truncate(MAX_FILES_PER_CATEGORY);
 
@@ -63,9 +49,6 @@ pub fn list(paths: &AppPaths) -> Result<DataFileListing> {
 }
 
 /// Walk `dir`, appending files to `out`.
-///
-/// Unreadable entries are skipped rather than failing the whole listing: one
-/// locked file should not blank the entire view.
 fn collect(dir: &Path, root: &Path, category: DataCategory, depth: usize, out: &mut Vec<DataFile>) {
     if depth > MAX_DEPTH {
         return;
@@ -113,10 +96,6 @@ fn collect(dir: &Path, root: &Path, category: DataCategory, depth: usize, out: &
 }
 
 /// Resolve a caller-supplied path and confirm it is a real file inside the data
-/// root.
-///
-/// Both sides are canonicalised before comparison, so `..`, a symlink out of
-/// the tree, or a short name cannot escape.
 pub fn resolve_inside_root(paths: &AppPaths, candidate: &str) -> Result<PathBuf> {
     if candidate.trim().is_empty() {
         return Err(AudisError::InvalidArgument {
@@ -143,7 +122,6 @@ pub fn resolve_inside_root(paths: &AppPaths, candidate: &str) -> Result<PathBuf>
         })?;
 
     if !resolved.starts_with(&root) {
-        // Deliberately vague to the user; the detail goes to the log instead.
         tracing::warn!(
             requested = %resolved.display(),
             "refused a path outside the Audis data folder"
@@ -233,7 +211,6 @@ mod tests {
     }
 
     /// The important one: a path from the frontend must never reach outside the
-    /// data folder, however it is spelled.
     #[test]
     fn traversal_out_of_the_root_is_refused() {
         let (guard, paths) = temp_paths();

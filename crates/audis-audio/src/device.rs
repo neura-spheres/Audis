@@ -12,7 +12,6 @@ pub enum DeviceKind {
     /// A microphone or other capture endpoint.
     Input,
     /// A speaker or headphone endpoint. Audis captures these with WASAPI
-    /// loopback to hear what the computer is playing.
     Output,
 }
 
@@ -21,10 +20,6 @@ pub enum DeviceKind {
 #[serde(rename_all = "camelCase")]
 pub struct AudioDevice {
     /// Stable identifier, from cpal's `DeviceId`.
-    ///
-    /// Safe to persist in settings: it survives restarts and is matched back
-    /// with `FromStr`, unlike a friendly name which changes when Windows
-    /// renames an endpoint.
     pub id: String,
     /// Name shown to the user.
     pub name: String,
@@ -49,9 +44,6 @@ pub struct AudioDevices {
 }
 
 /// Enumerate every input and output endpoint.
-///
-/// A device that fails to report its id or format is skipped rather than
-/// failing the whole enumeration: one broken driver should not empty the picker.
 pub fn enumerate() -> Result<AudioDevices> {
     let host = cpal::default_host();
 
@@ -93,8 +85,6 @@ fn describe(
         .map(|description| description.name().to_owned())
         .unwrap_or_else(|| id.id().to_owned());
 
-    // An output endpoint's output format is what loopback delivers, so each
-    // kind asks for the config it will actually run at.
     let config = match kind {
         DeviceKind::Input => device.default_input_config().ok()?,
         DeviceKind::Output => device.default_output_config().ok()?,
@@ -111,9 +101,6 @@ fn describe(
 }
 
 /// Find a device by id, or fall back to the system default.
-///
-/// Falling back matters: a saved device may have been unplugged since, and
-/// refusing to start would be worse than using the default and saying so.
 pub fn find(kind: DeviceKind, id: Option<&str>) -> Result<cpal::Device> {
     let host = cpal::default_host();
 
@@ -179,7 +166,6 @@ mod tests {
     }
 
     /// Runs against whatever hardware this machine has, so it must not panic on
-    /// a machine with no audio devices at all, such as a CI runner.
     #[test]
     fn enumeration_does_not_panic_without_hardware() {
         if let Ok(devices) = enumerate() {

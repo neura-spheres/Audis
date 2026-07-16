@@ -1,8 +1,4 @@
 //! The session state machine.
-//!
-//! One engine drives every mode. Live Caption and Meeting Assistant differ in
-//! what they persist and whether the assistant runs, not in how they capture
-//! audio, so they share this machine rather than each reimplementing it.
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -14,10 +10,6 @@ use crate::language::Language;
 pub type SessionMode = FeatureId;
 
 /// Where a session is in its life.
-///
-/// Transitions are checked centrally by [`SessionState::can_transition_to`]
-/// rather than at each call site, so an illegal move is impossible to write by
-/// accident.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SessionState {
@@ -41,18 +33,17 @@ impl SessionState {
     /// Whether `next` is a legal move from here.
     pub fn can_transition_to(self, next: Self) -> bool {
         use SessionState::*;
-        match (self, next) {
-            (Idle, Starting) => true,
-            (Starting, Listening) => true,
-            (Listening, Paused) | (Paused, Listening) => true,
-            (Listening | Paused, Stopping) => true,
-            (Stopping, Completed) => true,
-            // Anything live can fail.
-            (Starting | Listening | Paused | Stopping, Failed) => true,
-            // A finished session is done; starting again means a new session.
-            (Completed | Failed, Idle) => true,
-            _ => false,
-        }
+        matches!(
+            (self, next),
+            (Idle, Starting)
+                | (Starting, Listening)
+                | (Listening, Paused)
+                | (Paused, Listening)
+                | (Listening | Paused, Stopping)
+                | (Stopping, Completed)
+                | (Starting | Listening | Paused | Stopping, Failed)
+                | (Completed | Failed, Idle)
+        )
     }
 
     /// True while devices are open and audio is flowing or held.
@@ -61,9 +52,6 @@ impl SessionState {
     }
 
     /// True when Audis is actually capturing.
-    ///
-    /// This is what drives the visible listening indicator, so it must be true
-    /// only when audio is genuinely being captured.
     pub fn is_capturing(self) -> bool {
         matches!(self, Self::Listening)
     }

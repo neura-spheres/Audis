@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { ErrorNotice } from "@/components/ErrorNotice";
-import { SegmentedControl, Switch } from "@/components/controls";
+import { Button, SegmentedControl, Switch } from "@/components/controls";
+import { CheckIcon, ExternalIcon } from "@/components/icons";
 import { useSettings } from "@/hooks/useSettings";
-import { listModels, listProviders } from "@/services/ipc";
+import { listModels, listProviders, listProviderModels, setProviderKey } from "@/services/ipc";
 import type {
   InstalledModel,
   Language,
@@ -12,39 +13,32 @@ import type {
   TranscriptionEngine,
 } from "@/schemas/ipc";
 
-/**
- * Speech recognition settings.
- *
- * Recognition runs on this PC, so everything here is about which model and
- * which language, not about an account or a quota.
- */
+/** Speech recognition settings. */
 export function TranscriptionView() {
   const { settings, error, update } = useSettings();
   const [models, setModels] = useState<InstalledModel[]>();
   const [providers, setProviders] = useState<ProviderStatus[]>();
 
-  useEffect(() => {
-    listModels()
-      .then(setModels)
-      .catch(() => undefined);
+  const loadProviders = useCallback(() => {
     listProviders()
       .then(setProviders)
       .catch(() => undefined);
   }, []);
 
+  useEffect(() => {
+    listModels()
+      .then(setModels)
+      .catch(() => undefined);
+    loadProviders();
+  }, [loadProviders]);
+
   if (error) return <ErrorNotice error={error} />;
   if (!settings) return null;
 
   const { transcription } = settings;
-  const installed = (models ?? []).filter((model) => model.installed);
-  const selectedIsInstalled = installed.some((model) => model.info.id === transcription.model);
   const engine = transcription.engine;
-
-  // Only providers that can actually hear, and only ones with a key saved:
-  // offering the rest would move the failure to the moment you start talking.
-  const speechProviders = (providers ?? []).filter(
-    (provider) => provider.info.speech !== null && provider.hasKey,
-  );
+  const installed = (models ?? []).filter((model) => model.installed);
+  const speechProviders = (providers ?? []).filter((provider) => provider.info.speech !== null);
 
   const setEngine = (next: TranscriptionEngine) =>
     update((current) => ({
@@ -52,124 +46,43 @@ export function TranscriptionView() {
       transcription: {
         ...current.transcription,
         engine: next,
-        // Remember the local model while a provider is selected, so switching
-        // back does not silently reset it.
         model: next.kind === "local" ? next.model : current.transcription.model,
       },
     }));
 
   return (
-    <div className="flex flex-col gap-5">
-      <section className="flex flex-col gap-3">
-        <Row
-          label="Recognise speech with"
-          help={
-            engine.kind === "local"
-              ? "Whisper on this PC. Free, works offline, and your voice never leaves the machine."
-              : "A provider over the internet. More accurate than anything this PC can run live, and your audio is sent to them."
-          }
-        >
-          <SegmentedControl<string>
-            label="Speech engine"
-            value={engine.kind}
-            options={[
-              { id: "local", label: "This PC" },
-              { id: "cloud", label: "Provider" },
-            ]}
-            onChange={(kind) => {
-              if (kind === "local") {
-                setEngine({ kind: "local", model: transcription.model });
-                return;
-              }
-              const first = speechProviders[0];
-              if (!first?.info.speech) return;
-              setEngine({
-                kind: "cloud",
-                provider: first.info.id,
-                model: first.info.speech.defaultModel,
-              });
-            }}
+    <div className="flex flex-col gap-6">
+      <section className="flex flex-col gap-2">
+        <SectionTitle>Speech engine</SectionTitle>
+        <p className="px-1 text-footnote" style={{ color: "var(--label-secondary)" }}>
+          What turns audio into text. Run it on this PC for free and offline, or send audio to a
+          provider for accuracy this PC cannot match live.
+        </p>
+
+        <div role="radiogroup" aria-label="Speech engine" className="mt-1 flex flex-col gap-2.5">
+          <LocalEngineCard
+            selected={engine.kind === "local"}
+            installed={installed}
+            selectedModel={transcription.model}
+            onSelect={() => setEngine({ kind: "local", model: transcription.model })}
+            onModel={(model) => setEngine({ kind: "local", model })}
           />
-        </Row>
 
-        {engine.kind === "cloud" ? (
-          <p
-            className="px-3 py-2 text-footnote"
-            style={{
-              background: "color-mix(in srgb, var(--color-warning) 12%, transparent)",
-              borderRadius: "var(--radius-control)",
-              color: "var(--label-secondary)",
-            }}
-          >
-            Your audio is uploaded to this provider to be transcribed. It needs an internet
-            connection, and captions stop if it goes down. Switch back to This PC to keep everything
-            offline.
-          </p>
-        ) : null}
+          {speechProviders.map((provider) => (
+            <ProviderEngineCard
+              key={provider.info.id}
+              provider={provider}
+              engine={engine}
+              onSelect={setEngine}
+              onKeySaved={loadProviders}
+            />
+          ))}
+        </div>
+      </section>
 
-        {engine.kind === "cloud" && speechProviders.length === 0 ? (
-          <p className="px-1 text-footnote" style={{ color: "var(--color-warning)" }}>
-            No provider with a saved key can transcribe speech. Open Providers and add a key for
-            Groq or Gemini; both have free tiers.
-          </p>
-        ) : null}
-
-        {engine.kind === "cloud" && speechProviders.length > 0 ? (
-          <>
-            <Row label="Provider" help={providerSummary(speechProviders, engine)}>
-              <select
-                value={engine.provider}
-                onChange={(event) => {
-                  const chosen = speechProviders.find(
-                    (provider) => provider.info.id === event.target.value,
-                  );
-                  if (!chosen?.info.speech) return;
-                  setEngine({
-                    kind: "cloud",
-                    provider: chosen.info.id,
-                    model: chosen.info.speech.defaultModel,
-                  });
-                }}
-                className="px-2.5 py-[5px] text-footnote"
-                style={selectStyle}
-              >
-                {speechProviders.map((provider) => (
-                  <option key={provider.info.id} value={provider.info.id}>
-                    {provider.info.name}
-                  </option>
-                ))}
-              </select>
-            </Row>
-
-            <Row label="Provider model" help="Which of the provider's speech models to use.">
-              <select
-                value={engine.model}
-                onChange={(event) =>
-                  setEngine({
-                    kind: "cloud",
-                    provider: engine.provider,
-                    model: event.target.value,
-                  })
-                }
-                className="px-2.5 py-[5px] text-footnote"
-                style={selectStyle}
-              >
-                {(
-                  speechProviders.find((provider) => provider.info.id === engine.provider)?.info
-                    .speech?.models ?? []
-                ).map((model) => (
-                  <option key={model} value={model}>
-                    {model}
-                  </option>
-                ))}
-              </select>
-            </Row>
-          </>
-        ) : null}
-        <Row
-          label="Language"
-          help="Audis recognises Indonesian and English. Tell it which one you are speaking: choosing is more accurate than letting it guess, especially when you mix in English words."
-        >
+      <section className="flex flex-col gap-3">
+        <SectionTitle>Language</SectionTitle>
+        <Row help="Audis recognises Indonesian and English. Tell it which you are speaking: choosing beats guessing, especially when you mix in English words.">
           <SegmentedControl<Language>
             label="Recognition language"
             value={transcription.language}
@@ -185,57 +98,10 @@ export function TranscriptionView() {
             }
           />
         </Row>
-
-        {engine.kind === "local" ? (
-          <Row
-            label="Speech model"
-            help="Bigger models are more accurate and slower. Base suits most people."
-          >
-            {installed.length === 0 ? (
-              <span className="text-footnote" style={{ color: "var(--color-warning)" }}>
-                No model installed. Open Models.
-              </span>
-            ) : (
-              <select
-                value={transcription.model}
-                onChange={(event) =>
-                  update((current) => ({
-                    ...current,
-                    transcription: {
-                      ...current.transcription,
-                      model: event.target.value as ModelId,
-                    },
-                  }))
-                }
-                className="px-2.5 py-[5px] text-footnote"
-                style={{
-                  background: "var(--surface-elevated)",
-                  color: "var(--label-primary)",
-                  border: "0.5px solid var(--border-control)",
-                  borderRadius: "var(--radius-control)",
-                }}
-              >
-                {installed.map((model) => (
-                  <option key={model.info.id} value={model.info.id}>
-                    {model.info.name}
-                  </option>
-                ))}
-              </select>
-            )}
-          </Row>
-        ) : null}
-
-        {/* The selected model can be one that was since removed. Saying so beats
-            letting the user find out when a session refuses to start. */}
-        {engine.kind === "local" && installed.length > 0 && !selectedIsInstalled ? (
-          <p className="px-1 text-footnote" style={{ color: "var(--color-warning)" }}>
-            The model you chose is no longer installed. Pick one above, or reinstall it from Models.
-          </p>
-        ) : null}
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="px-1 text-subheadline font-semibold">What to listen to</h2>
+        <SectionTitle>What to listen to</SectionTitle>
 
         <Row label="Your microphone" help="What you say. Always labelled as you, never guessed.">
           <Switch
@@ -266,8 +132,6 @@ export function TranscriptionView() {
           />
         </Row>
 
-        {/* A session with nothing to listen to cannot start. Say it here rather
-            than failing at the point the user commits to a meeting. */}
         {!transcription.captureMicrophone && !transcription.captureComputerAudio ? (
           <p className="px-1 text-footnote" style={{ color: "var(--color-warning)" }}>
             Audis needs at least one of these switched on before a session can start.
@@ -275,9 +139,6 @@ export function TranscriptionView() {
         ) : null}
       </section>
 
-      {/* This claim used to be unconditional. It is only true for one of the
-          two engines now, and printing it while uploading audio would be the
-          worst kind of wrong. */}
       <p className="px-1 text-footnote" style={{ color: "var(--label-tertiary)" }}>
         {engine.kind === "local"
           ? "Recognition runs entirely on this PC. Nothing you say is sent anywhere, and it works with no internet connection."
@@ -287,12 +148,280 @@ export function TranscriptionView() {
   );
 }
 
+/** The local Whisper option, with its model picker when selected. */
+function LocalEngineCard({
+  selected,
+  installed,
+  selectedModel,
+  onSelect,
+  onModel,
+}: {
+  selected: boolean;
+  installed: InstalledModel[];
+  selectedModel: ModelId;
+  onSelect: () => void;
+  onModel: (model: ModelId) => void;
+}) {
+  const selectedIsInstalled = installed.some((model) => model.info.id === selectedModel);
+
+  return (
+    <EngineCard
+      selected={selected}
+      onSelect={onSelect}
+      title="This PC"
+      badge={{ label: "Free · Private", tone: "success" }}
+      summary="Whisper runs on your computer. Works offline, and your voice never leaves the machine."
+    >
+      {installed.length === 0 ? (
+        <p className="text-footnote" style={{ color: "var(--color-warning)" }}>
+          No speech model is installed yet. Open Models and install Whisper Base — it is free.
+        </p>
+      ) : (
+        <label className="flex items-center justify-between gap-3">
+          <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
+            Model
+          </span>
+          <select
+            value={selectedModel}
+            onChange={(event) => onModel(event.target.value as ModelId)}
+            className="px-2.5 py-[5px] text-footnote"
+            style={inputStyle}
+          >
+            {installed.map((model) => (
+              <option key={model.info.id} value={model.info.id}>
+                {model.info.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      {installed.length > 0 && !selectedIsInstalled ? (
+        <p className="text-footnote" style={{ color: "var(--color-warning)" }}>
+          The model you chose is no longer installed. Pick one above, or reinstall it from Models.
+        </p>
+      ) : null}
+    </EngineCard>
+  );
+}
+
+/** One cloud provider as a speech engine. */
+function ProviderEngineCard({
+  provider,
+  engine,
+  onSelect,
+  onKeySaved,
+}: {
+  provider: ProviderStatus;
+  engine: TranscriptionEngine;
+  onSelect: (engine: TranscriptionEngine) => void;
+  onKeySaved: () => void;
+}) {
+  const speech = provider.info.speech;
+  const selected = engine.kind === "cloud" && engine.provider === provider.info.id;
+  const [keyInput, setKeyInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [liveModels, setLiveModels] = useState<string[]>();
+
+  useEffect(() => {
+    if (!provider.hasKey) return;
+    let active = true;
+    listProviderModels(provider.info.id, "speech")
+      .then((models) => {
+        if (active && models.length > 0) setLiveModels(models);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [provider.hasKey, provider.info.id]);
+
+  if (!speech) return null;
+
+  const models = liveModels ?? speech.models;
+
+  const select = () =>
+    onSelect({ kind: "cloud", provider: provider.info.id, model: speech.defaultModel });
+
+  const saveKey = () => {
+    if (!keyInput.trim()) return;
+    setSaving(true);
+    setProviderKey(provider.info.id, keyInput)
+      .then(() => {
+        setKeyInput("");
+        onKeySaved();
+      })
+      .catch(() => undefined)
+      .finally(() => setSaving(false));
+  };
+
+  return (
+    <EngineCard
+      selected={selected}
+      onSelect={select}
+      title={provider.info.name}
+      badge={provider.info.freeTier ? { label: "Free tier", tone: "success" } : undefined}
+      summary={speech.summary}
+    >
+      {provider.hasKey ? (
+        <label className="flex items-center justify-between gap-3">
+          <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
+            Model
+          </span>
+          <select
+            value={selected ? engine.model : speech.defaultModel}
+            onChange={(event) =>
+              onSelect({
+                kind: "cloud",
+                provider: provider.info.id,
+                model: event.target.value,
+              })
+            }
+            className="px-2.5 py-[5px] text-footnote"
+            style={inputStyle}
+          >
+            {models.map((model) => (
+              <option key={model} value={model}>
+                {model}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <p className="text-footnote" style={{ color: "var(--label-secondary)" }}>
+            Add an API key to use {provider.info.name}. It is stored in the Windows Credential
+            Manager, never in a file.
+          </p>
+          <div className="flex items-end gap-2">
+            <input
+              type="password"
+              value={keyInput}
+              onChange={(event) => setKeyInput(event.target.value)}
+              placeholder="Paste your API key"
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full px-2.5 py-[5px] text-footnote"
+              style={inputStyle}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") saveKey();
+              }}
+            />
+            <Button onClick={saveKey} disabled={!keyInput.trim() || saving} variant="accent">
+              {saving ? "Saving…" : "Save"}
+            </Button>
+          </div>
+          {provider.info.consoleUrl ? (
+            <a
+              href={provider.info.consoleUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="flex items-center gap-1.5 self-start text-footnote"
+              style={{ color: "var(--color-accent)" }}
+            >
+              <ExternalIcon />
+              Get a free key from {provider.info.name}
+            </a>
+          ) : null}
+        </div>
+      )}
+    </EngineCard>
+  );
+}
+
+/** A selectable engine card, radio-style. Its body shows only when selected. */
+function EngineCard({
+  selected,
+  onSelect,
+  title,
+  badge,
+  summary,
+  children,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  title: string;
+  badge?: { label: string; tone: "success" | "neutral" } | undefined;
+  summary: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        background: "var(--surface-content)",
+        borderRadius: "var(--radius-card)",
+        boxShadow: "var(--shadow-card)",
+        outline: selected ? "1.5px solid var(--color-accent)" : "1.5px solid transparent",
+        outlineOffset: -1,
+      }}
+    >
+      <button
+        type="button"
+        role="radio"
+        aria-checked={selected}
+        onClick={onSelect}
+        className="flex w-full items-start gap-3 p-4 text-left"
+      >
+        <Radio selected={selected} />
+        <div className="flex min-w-0 flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <span className="text-body font-semibold">{title}</span>
+            {badge ? (
+              <span
+                className="px-1.5 py-0.5 text-caption2 font-medium"
+                style={{
+                  color:
+                    badge.tone === "success" ? "var(--color-success)" : "var(--label-secondary)",
+                }}
+              >
+                {badge.label}
+              </span>
+            ) : null}
+          </div>
+          <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
+            {summary}
+          </span>
+        </div>
+      </button>
+
+      {selected ? (
+        <div
+          className="flex flex-col gap-2 border-t px-4 py-3"
+          style={{ borderColor: "var(--separator)" }}
+        >
+          {children}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function Radio({ selected }: { selected: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className="mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full"
+      style={{
+        border: selected ? "none" : "1.5px solid var(--border-control)",
+        background: selected ? "var(--color-accent)" : "transparent",
+        color: "#ffffff",
+      }}
+    >
+      {selected ? <CheckIcon /> : null}
+    </span>
+  );
+}
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return <h2 className="px-1 text-subheadline font-semibold">{children}</h2>;
+}
+
 function Row({
   label,
   help,
   children,
 }: {
-  label: string;
+  label?: string;
   help: string;
   children: React.ReactNode;
 }) {
@@ -306,7 +435,7 @@ function Row({
       }}
     >
       <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-subheadline">{label}</span>
+        {label ? <span className="text-subheadline">{label}</span> : null}
         <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
           {help}
         </span>
@@ -316,18 +445,9 @@ function Row({
   );
 }
 
-const selectStyle = {
+const inputStyle = {
   background: "var(--surface-elevated)",
   color: "var(--label-primary)",
   border: "0.5px solid var(--border-control)",
   borderRadius: "var(--radius-control)",
 } as const;
-
-/** What the selected provider is like, in the catalogue's own words. */
-function providerSummary(
-  providers: ProviderStatus[],
-  engine: Extract<TranscriptionEngine, { kind: "cloud" }>,
-): string {
-  const provider = providers.find((candidate) => candidate.info.id === engine.provider);
-  return provider?.info.speech?.summary ?? "Which provider transcribes your audio.";
-}

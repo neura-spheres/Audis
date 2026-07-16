@@ -20,13 +20,7 @@ import {
 } from "@/schemas/ipc";
 import { formatBytes } from "@/lib/format";
 
-/**
- * Install and remove local speech models.
- *
- * Models are downloaded rather than bundled, so the installer stays small and a
- * user only pays for the one they use. Everything here is free and runs on this
- * PC with no account.
- */
+/** Install and remove local speech models. */
 export function ModelsView() {
   const [models, setModels] = useState<InstalledModel[]>();
   const [progress, setProgress] = useState<ModelProgress>();
@@ -40,8 +34,6 @@ export function ModelsView() {
 
   useEffect(refresh, [refresh]);
 
-  // A download outlives the view that started it, so on mount we ask whether
-  // one is already running rather than assuming it is not.
   useEffect(() => {
     isModelDownloading()
       .then((running) => {
@@ -56,7 +48,6 @@ export function ModelsView() {
         }
       })
       .catch(() => undefined);
-    // Intentionally on mount only: this is a one-time state restore.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -176,8 +167,7 @@ function ModelCard({
                 Installed
               </span>
             ) : null}
-            {/* Speed decides whether a model is usable at all, so it sits next
-                to the name rather than buried in the description. */}
+
             {!info.keepsUpLive ? (
               <span
                 className="px-1.5 py-0.5 text-caption2 font-medium"
@@ -214,8 +204,6 @@ function ModelCard({
             <Button
               onClick={onInstall}
               variant={info.recommended ? "accent" : "standard"}
-              // One download at a time: two large models at once would starve
-              // each other and make both progress bars meaningless.
               disabled={busy}
               ariaLabel={`Install ${info.name}`}
             >
@@ -238,8 +226,6 @@ function DownloadProgress({
   progress: ModelProgress;
   fallbackTotal: number;
 }) {
-  // The server's length when it gave one, otherwise the catalogue figure, so
-  // the bar still moves rather than sitting at zero.
   const total = progress.totalBytes ?? fallbackTotal;
   const fraction = total > 0 ? Math.min(1, progress.downloadedBytes / total) : 0;
 

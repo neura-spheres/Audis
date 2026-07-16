@@ -3,26 +3,24 @@ import { useCallback, useEffect, useState } from "react";
 import { GroupedList, Row } from "@/components/GroupedList";
 import { ErrorNotice } from "@/components/ErrorNotice";
 import { Button } from "@/components/controls";
+import { useSettings } from "@/hooks/useSettings";
 import { LevelMeter } from "./LevelMeter";
 import { useAudioLevels } from "./useAudioLevels";
 import { listAudioDevices, startAudioTest, stopAudioTest, AudisIpcError } from "@/services/ipc";
 import type { AudioDevice, AudioDevices, AudioTestStatus, UserFacingError } from "@/schemas/ipc";
 
-/**
- * Audio devices and the live capture test.
- *
- * This is real: it enumerates Windows endpoints, opens the microphone and a
- * WASAPI loopback capture of the chosen output, and shows both live levels.
- */
+/** Audio devices and the live capture test. */
 export function AudioView() {
+  const { settings, update } = useSettings();
   const [devices, setDevices] = useState<AudioDevices>();
-  const [micId, setMicId] = useState<string | null>(null);
-  const [outId, setOutId] = useState<string | null>(null);
   const [status, setStatus] = useState<AudioTestStatus>();
   const [error, setError] = useState<UserFacingError>();
   const [testing, setTesting] = useState(false);
 
   const levels = useAudioLevels(testing);
+
+  const micId = settings?.audio.microphoneId ?? null;
+  const outId = settings?.audio.computerAudioId ?? null;
 
   useEffect(() => {
     listAudioDevices()
@@ -30,9 +28,6 @@ export function AudioView() {
       .catch((cause: unknown) => setError(toUserFacing(cause)));
   }, []);
 
-  // Releasing the devices when the user navigates away matters: holding the
-  // microphone open would keep the Windows "in use" indicator lit and could
-  // block other apps.
   useEffect(() => {
     return () => {
       void stopAudioTest().catch(() => undefined);
@@ -58,21 +53,31 @@ export function AudioView() {
       .catch((cause: unknown) => setError(toUserFacing(cause)));
   }, []);
 
-  // Changing a device mid-test restarts capture on the new one, which is what
-  // clicking a picker obviously ought to do.
   const pick = (kind: "mic" | "out", id: string | null) => {
-    if (kind === "mic") setMicId(id);
-    else setOutId(id);
+    const nextMic = kind === "mic" ? id : micId;
+    const nextOut = kind === "out" ? id : outId;
+
+    update((current) => ({
+      ...current,
+      audio: { microphoneId: nextMic, computerAudioId: nextOut },
+    }));
+
     if (testing) {
-      startAudioTest(kind === "mic" ? id : micId, kind === "out" ? id : outId)
+      startAudioTest(nextMic, nextOut)
         .then(setStatus)
         .catch((cause: unknown) => setError(toUserFacing(cause)));
     }
   };
 
+  if (!settings) return null;
+
   return (
     <div className="flex flex-col gap-8">
       {error ? <ErrorNotice error={error} /> : null}
+
+      <p className="px-1 text-footnote" style={{ color: "var(--label-secondary)" }}>
+        Your device choice is saved automatically and used for every session.
+      </p>
 
       <GroupedList
         title="Microphone"
@@ -183,13 +188,7 @@ function channelLabel(channels: number): string {
   return `${channels} channels`;
 }
 
-/**
- * Device picker.
- *
- * A native select rather than a custom menu: it inherits Windows keyboard
- * behaviour, screen-reader support and overflow handling for free, and this
- * list can be long.
- */
+/** Device picker. */
 function DevicePicker({
   devices,
   value,

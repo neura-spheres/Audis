@@ -35,11 +35,7 @@ export function applyTheme(theme: ResolvedTheme): void {
   document.documentElement.dataset["theme"] = theme;
 }
 
-/**
- * Keep the document in sync with the store and the OS. Called once from
- * main.tsx rather than a component, so the theme never flickers on mount.
- * Returns an unsubscribe function.
- */
+/** Keep the document in sync with the store and the OS. Called once from */
 export function startThemeSync(): () => void {
   const apply = () => applyTheme(resolveTheme(useThemeStore.getState().preference));
 
@@ -47,8 +43,6 @@ export function startThemeSync(): () => void {
 
   const unsubscribeStore = useThemeStore.subscribe(apply);
 
-  // Only relevant while the preference is "system", but subscribing
-  // unconditionally keeps this branch-free and cheap.
   const media = globalThis.matchMedia?.(DARK_QUERY);
   media?.addEventListener("change", apply);
 

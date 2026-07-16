@@ -1,8 +1,4 @@
 //! Loading and saving user settings.
-//!
-//! Settings live in `<data>/settings.json`. Writes go to a temp file on the
-//! same volume and are then renamed over the original, so a crash mid-write
-//! leaves the previous settings intact rather than a truncated file.
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -20,11 +16,6 @@ pub struct SettingsStore {
 
 impl SettingsStore {
     /// Load settings from disk, falling back to defaults.
-    ///
-    /// A missing file is normal on first run. A corrupt file is not fatal
-    /// either: Audis logs it and continues with defaults rather than refusing
-    /// to start, and the bad file is left alone rather than overwritten so it
-    /// can still be recovered by hand.
     pub fn load(paths: &AppPaths) -> Self {
         let path = paths.root().join(FILE_NAME);
 
@@ -84,7 +75,6 @@ impl SettingsStore {
             source,
         })?;
 
-        // Same volume as the destination, so the rename below is atomic.
         let staging = self
             .temp_dir
             .join(format!("{FILE_NAME}.{}", std::process::id()));
@@ -139,7 +129,6 @@ mod tests {
     }
 
     /// A corrupt file must not stop Audis from starting, and must not be
-    /// silently destroyed either.
     #[test]
     fn a_corrupt_file_falls_back_to_defaults_and_is_left_on_disk() {
         let (_guard, paths) = temp_paths();

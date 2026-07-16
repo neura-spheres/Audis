@@ -1,12 +1,7 @@
 import { NAV_GROUPS, type ViewId } from "@/app/navigation";
 import { Wordmark } from "@/components/Wordmark";
 
-/**
- * Source-list navigation, in the manner of Finder and macOS System Settings.
- *
- * The list scrolls independently of the content pane, so a long settings list
- * never squashes the view beside it.
- */
+/** Source-list navigation, in the manner of Finder and macOS System Settings. */
 interface SidebarProps {
   activeId: ViewId;
   onSelect: (id: ViewId) => void;
@@ -19,10 +14,6 @@ export function Sidebar({ activeId, onSelect }: SidebarProps) {
       className="flex h-full w-[228px] shrink-0 flex-col border-r"
       style={{ borderColor: "var(--separator)", background: "var(--surface-window)" }}
     >
-      {/* Draggable strip carrying just the mark, so the top of the window is
-          not dead space. No wordmark text here: the native title bar already
-          reads "Neura Audis", and repeating the product name immediately
-          below it was redundant. */}
       <div data-tauri-drag-region className="flex h-11 shrink-0 items-center px-3.5">
         <Wordmark size={22} />
       </div>

@@ -1,7 +1,4 @@
 //! Product identity constants.
-//!
-//! Defined once here so the installer, tray, About page and update metadata
-//! can never disagree about what this application is called.
 
 /// Company and product family.
 pub const COMPANY: &str = "Neura Audis";

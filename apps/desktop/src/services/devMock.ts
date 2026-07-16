@@ -10,21 +10,10 @@ import {
 } from "@/test/fixtures";
 import type { Settings } from "@/schemas/ipc";
 
-/**
- * Fake IPC backend for browser development.
- *
- * Under `vite dev` in a plain browser there is no Rust core to answer invoke,
- * so the UI would render nothing but error states. No-op inside the real app,
- * where Tauri injects __TAURI_INTERNALS__, and tree-shaken out of production
- * builds by the DEV guard at the call site.
- */
+/** Fake IPC backend for browser development. */
 export function installDevIpcMock(): void {
   if ("__TAURI_INTERNALS__" in window) return;
 
-  // Held in memory so settings changes stick while developing. This mirrors
-  // Rust's `Settings::default()`; the shape is enforced by the `Settings` type,
-  // so a new field in Rust breaks the build here rather than silently going
-  // missing at runtime.
   let settings: Settings = {
     version: 1,
     general: {
@@ -56,6 +45,14 @@ export function installDevIpcMock(): void {
       togglePause: "CmdOrCtrl+Shift+P",
       toggleCaptions: "CmdOrCtrl+Shift+C",
       askAssistant: "CmdOrCtrl+Shift+A",
+    },
+    assistant: {
+      enabled: false,
+      provider: "gemini",
+      model: "gemini-2.0-flash",
+      context: "general",
+      notes: "",
+      answerOwnQuestions: false,
     },
     providers: [],
   };

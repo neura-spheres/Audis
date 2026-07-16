@@ -6,12 +6,7 @@ import { getDiagnostics, revealDataFile } from "@/services/ipc";
 import type { Diagnostics } from "@/schemas/ipc";
 import { formatBytes } from "@/lib/format";
 
-/**
- * Where Audis keeps things and how much space it uses.
- *
- * The numbers are measured from disk. Retention and cleanup arrive with the
- * session engine, since there is nothing to retain yet.
- */
+/** Where Audis keeps things and how much space it uses. */
 export function StorageView() {
   const [diagnostics, setDiagnostics] = useState<Diagnostics>();
 

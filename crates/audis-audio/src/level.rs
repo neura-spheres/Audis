@@ -1,9 +1,4 @@
 //! Level metering.
-//!
-//! The capture callback is a real-time thread: it must not allocate, lock, or
-//! block. So it does the cheap arithmetic inline and stores the result in
-//! atomics. Anything that wants a reading (the UI, at about 25 Hz) reads those
-//! atomics from a normal thread and never touches the callback.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -17,7 +12,6 @@ pub struct AudioLevel {
     /// Loudest sample in the last block, 0.0 to 1.0.
     pub peak: f32,
     /// Root mean square of the last block, 0.0 to 1.0. Tracks perceived
-    /// loudness far better than peak, so it is what the meter bar should show.
     pub rms: f32,
     /// True when a sample hit full scale and was probably clipped.
     pub clipping: bool,
@@ -26,9 +20,6 @@ pub struct AudioLevel {
 }
 
 /// Anything below this is treated as silence rather than signal.
-///
-/// Roughly -60 dBFS. Real microphones never read a true zero: there is always
-/// a noise floor, so a naive `== 0.0` check would never report silence.
 const SILENCE_THRESHOLD: f32 = 0.001;
 
 /// Full scale. Samples at or above this were probably clipped by the ADC.
@@ -54,11 +45,6 @@ impl LevelMeter {
     }
 
     /// Record one block of samples.
-    ///
-    /// Called from the audio callback. Allocation-free and lock-free by
-    /// construction: only arithmetic over a borrowed slice, then relaxed atomic
-    /// stores. Relaxed is right here because these values are advisory display
-    /// data with no ordering relationship to anything else.
     pub fn observe(&self, samples: &[f32]) {
         if samples.is_empty() {
             return;
@@ -84,8 +70,6 @@ impl LevelMeter {
             self.clipping.store(true, Ordering::Relaxed);
         }
 
-        // Track silence in samples rather than wall-clock, so the figure stays
-        // correct regardless of how often the callback fires.
         if peak < SILENCE_THRESHOLD {
             self.silent_samples
                 .fetch_add(samples.len() as u64, Ordering::Relaxed);
@@ -95,10 +79,6 @@ impl LevelMeter {
     }
 
     /// Read the current level.
-    ///
-    /// Clears the clipping latch, so a clip is reported exactly once to
-    /// whoever asks first. That keeps a brief clip visible even if it happened
-    /// between two reads, instead of being missed entirely.
     pub fn read(&self) -> AudioLevel {
         let sample_rate = self.sample_rate.load(Ordering::Relaxed).max(1);
         let silent_samples = self.silent_samples.load(Ordering::Relaxed);
@@ -112,7 +92,6 @@ impl LevelMeter {
     }
 
     /// Update the sample rate, when a device reports a different one than
-    /// requested.
     pub fn set_sample_rate(&self, sample_rate: u32) {
         self.sample_rate.store(sample_rate, Ordering::Relaxed);
     }
@@ -136,8 +115,6 @@ mod tests {
     #[test]
     fn peak_and_rms_are_measured() {
         let meter = LevelMeter::new(48_000);
-        // Full-scale square wave: peak 1.0, and RMS also 1.0 because every
-        // sample is at full magnitude.
         meter.observe(&[0.5, -0.5, 0.5, -0.5]);
 
         let level = meter.read();
@@ -148,7 +125,6 @@ mod tests {
     #[test]
     fn rms_is_below_peak_for_a_realistic_signal() {
         let meter = LevelMeter::new(48_000);
-        // One loud sample among quiet ones: peak is high, RMS is not.
         let mut block = [0.01f32; 100];
         block[0] = 0.9;
         meter.observe(&block);
@@ -177,15 +153,12 @@ mod tests {
     fn silence_duration_accumulates_and_resets_on_signal() {
         let meter = LevelMeter::new(48_000);
 
-        // Half a second of silence at 48 kHz.
         meter.observe(&[0.0; 24_000]);
         assert_eq!(meter.read().silence_duration_ms, 500);
 
-        // Another half second: the counter keeps climbing.
         meter.observe(&[0.0; 24_000]);
         assert_eq!(meter.read().silence_duration_ms, 1000);
 
-        // Real signal resets it.
         meter.observe(&[0.5; 480]);
         assert_eq!(meter.read().silence_duration_ms, 0);
     }

@@ -1,19 +1,10 @@
 //! Typed IPC contracts shared by the Rust core and the React frontend.
-//!
-//! Naming: the recognition engine and its pipeline use ASR terminology
-//! (`AsrProvider`, `AsrStream`, `AsrError`). What the engine produces is a
-//! transcript, so the events carrying segments to the UI are named for that
-//! artifact. Product wording is "Speech-to-Text", "Live Transcription" or
-//! "Live Captions"; "ASR" stays internal.
 
 use serde::{Deserialize, Serialize};
 
 use crate::identity::EVENT_PREFIX;
 
 /// Event channel names emitted by the Rust core.
-///
-/// `events.ts` on the frontend mirrors this list, and a test there fails if the
-/// two ever drift apart.
 pub mod events {
     /// Session lifecycle transitions.
     pub const SESSION_STATE: &str = "audis://session/state";
@@ -58,10 +49,6 @@ pub mod events {
     pub const MODEL_PROGRESS: &str = "audis://model/progress";
 
     /// Settings were saved. Carries the whole `Settings`.
-    ///
-    /// Settings are edited in the main window but also drive the caption
-    /// overlay, which is a separate window with its own copy. Without this it
-    /// keeps whatever it read at startup and the controls appear to do nothing.
     pub const SETTINGS_CHANGED: &str = "audis://settings/changed";
 
     /// Every event this build can emit.
@@ -85,10 +72,6 @@ pub mod events {
 }
 
 /// Which audio source a frame, segment or level reading came from.
-///
-/// There is deliberately no "mixed" variant. Microphone audio is the local
-/// user and loopback is everyone else; mixing them before attribution cannot
-/// be undone, so the type system refuses to represent it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum AudioSourceKind {

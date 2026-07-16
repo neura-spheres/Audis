@@ -1,9 +1,4 @@
-/**
- * Line icons matching SF Symbols' proportions: 1.5px strokes on a 16px grid,
- * round caps and joins, no fills. Inline SVG rather than an icon package, since
- * the CSP forbids remote sprite sheets and a fixed set does not justify a
- * dependency.
- */
+/** Line icons matching SF Symbols' proportions: 1.5px strokes on a 16px grid, */
 
 const base = {
   width: 16,

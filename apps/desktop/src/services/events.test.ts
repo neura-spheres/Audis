@@ -6,13 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { AUDIS_EVENTS } from "./events";
 
-/**
- * Contract test against the Rust source.
- *
- * If Rust renames a channel and this file is not updated, captions simply stop
- * arriving: no crash, no type error, no clue. Parsing ipc.rs is unglamorous but
- * it turns that silent failure into a red test.
- */
+/** Contract test against the Rust source. */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rustIpcSource = path.resolve(here, "../../../../crates/audis-common/src/ipc.rs");
@@ -28,8 +22,6 @@ describe("Audis event contract", () => {
     const rust = eventNamesDeclaredInRust();
     const typescript = Object.values(AUDIS_EVENTS) as string[];
 
-    // Guards against the regex matching nothing if ipc.rs moves or is
-    // reformatted, which would make this test vacuously pass.
     expect(rust.length).toBeGreaterThan(0);
 
     expect([...rust].sort()).toEqual([...typescript].sort());

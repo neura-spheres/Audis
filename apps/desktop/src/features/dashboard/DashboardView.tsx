@@ -10,14 +10,7 @@ import type { Diagnostics } from "@/schemas/ipc";
 import type { ViewId } from "@/app/navigation";
 import { formatBytes } from "@/lib/format";
 
-/**
- * Dashboard.
- *
- * Reports only what Audis can genuinely determine right now: build identity,
- * live session state, and measured storage. The listening indicator is driven
- * by the session itself rather than by anything this view decides, so it cannot
- * claim Audis is idle while a microphone is open.
- */
+/** Dashboard. */
 export function DashboardView({ onNavigate }: { onNavigate: (id: ViewId) => void }) {
   const state = useAppInfo();
   const { session } = useSession();
@@ -125,8 +118,6 @@ export function DashboardView({ onNavigate }: { onNavigate: (id: ViewId) => void
 /** Whether a source is being captured by the running session. */
 function SourceState({ on, live }: { on: boolean; live: boolean }) {
   if (!on) {
-    // Idle is not the same as broken: with no session running, no device is
-    // open and that is correct rather than a fault.
     return <span style={{ color: "var(--label-tertiary)" }}>Not capturing</span>;
   }
 

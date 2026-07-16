@@ -11,6 +11,8 @@ import {
   installedModelSchema,
   providerStatusSchema,
   sessionStatusSchema,
+  sessionSummarySchema,
+  transcriptSegmentSchema,
   settingsSchema,
   userFacingErrorSchema,
   type AppInfo,
@@ -24,18 +26,15 @@ import {
   type ProviderId,
   type FeatureId,
   type ProviderStatus,
+  type ExportFormat,
   type SessionStatus,
+  type SessionSummary,
+  type TranscriptSegment,
   type Settings,
   type UserFacingError,
 } from "@/schemas/ipc";
 
-/**
- * The typed IPC boundary.
- *
- * Everything arriving from Rust is parsed with a schema before React sees it,
- * and every error leaving this file is a UserFacingError, so components never
- * have to interpret a raw Tauri rejection.
- */
+/** The typed IPC boundary. */
 
 /** Thrown by {@link callCommand} when a command fails. */
 export class AudisIpcError extends Error {
@@ -48,11 +47,7 @@ export class AudisIpcError extends Error {
   }
 }
 
-/**
- * Fallback for a rejection that is not shaped like a UserFacingError: a panic,
- * or a failure before Rust could build a proper error. We still owe the user a
- * coherent message.
- */
+/** Fallback for a rejection that is not shaped like a UserFacingError: a panic, */
 function unrecognisedFailure(cause: unknown): UserFacingError {
   return {
     title: "Audis hit an unexpected problem",
@@ -66,11 +61,7 @@ function unrecognisedFailure(cause: unknown): UserFacingError {
   };
 }
 
-/**
- * Invoke a Rust command and validate its result.
- *
- * @throws {AudisIpcError} if the command fails or returns an unexpected shape.
- */
+/** Invoke a Rust command and validate its result. */
 export async function callCommand<TSchema extends z.ZodType>(
   command: string,
   schema: TSchema,
@@ -86,8 +77,6 @@ export async function callCommand<TSchema extends z.ZodType>(
 
   const result = schema.safeParse(raw);
   if (!result.success) {
-    // The two halves of the app disagree about a shape. Fail loudly here rather
-    // than letting undefined propagate into a component.
     throw new AudisIpcError({
       ...unrecognisedFailure(new Error(`"${command}" returned an unexpected shape`)),
       technicalDetails: result.error.message,
@@ -98,14 +87,7 @@ export async function callCommand<TSchema extends z.ZodType>(
   return result.data;
 }
 
-/**
- * The result of a command that returns nothing.
- *
- * Tauri serialises Rust's `()` as JSON `null`, not `undefined`. A schema that
- * only accepts `undefined` therefore rejects it, and the command appears to
- * fail after having actually succeeded: the key gets saved, the file gets
- * opened, and the UI still shows an error. Accept both and normalise.
- */
+/** The result of a command that returns nothing. */
 const voidResult = z.union([z.null(), z.undefined()]).transform(() => undefined as void);
 
 /** Identity and build information for the About page and diagnostics. */
@@ -148,11 +130,7 @@ export function listAudioDevices(): Promise<AudioDevices> {
   return callCommand("list_audio_devices", audioDevicesSchema);
 }
 
-/**
- * Open both captures and start streaming levels on `audis://audio/level`.
- *
- * Passing `null` for a device means "use the Windows default".
- */
+/** Open both captures and start streaming levels on `audis://audio/level`. */
 export function startAudioTest(
   microphoneId: string | null,
   computerAudioId: string | null,
@@ -178,11 +156,7 @@ export function listModels(): Promise<InstalledModel[]> {
   return callCommand("list_models", z.array(installedModelSchema));
 }
 
-/**
- * Download a model. Progress arrives on `audis://model/progress`.
- *
- * Resolves only when the download finishes, which can be minutes.
- */
+/** Download a model. Progress arrives on `audis://model/progress`. */
 export function installModel(id: ModelId): Promise<void> {
   return callCommand("install_model", voidResult, { id });
 }
@@ -207,12 +181,7 @@ export function listProviders(): Promise<ProviderStatus[]> {
   return callCommand("list_providers", z.array(providerStatusSchema));
 }
 
-/**
- * Save an API key to the OS credential store.
- *
- * The key leaves the frontend here and never comes back: there is deliberately
- * no command to read one.
- */
+/** Save an API key to the OS credential store. */
 export function setProviderKey(id: ProviderId, key: string): Promise<void> {
   return callCommand("set_provider_key", voidResult, { id, key });
 }
@@ -220,6 +189,16 @@ export function setProviderKey(id: ProviderId, key: string): Promise<void> {
 /** Delete a provider's API key. */
 export function deleteProviderKey(id: ProviderId): Promise<void> {
   return callCommand("delete_provider_key", voidResult, { id });
+}
+
+/** The provider's current models for a purpose, fetched from its API. */
+export function listProviderModels(id: ProviderId, purpose: "speech" | "chat"): Promise<string[]> {
+  return callCommand("list_provider_models", z.array(z.string()), { provider: id, purpose });
+}
+
+/** Ask the assistant to answer a question. Empty means "not a real question". */
+export function askAssistant(question: string, transcript: string[]): Promise<string> {
+  return callCommand("ask_assistant", z.string(), { question, transcript });
 }
 
 /** Enable or configure a provider. */
@@ -232,12 +211,7 @@ export function updateProvider(
   return callCommand("update_provider", voidResult, { id, enabled, model, endpoint });
 }
 
-/**
- * Start a live session for `feature`.
- *
- * Resolves when capture is running, which includes loading the model, so this
- * can take a few seconds on first start.
- */
+/** Start a live session for `feature`. */
 export function startSession(feature: FeatureId): Promise<SessionStatus> {
   return callCommand("start_session", sessionStatusSchema, { feature });
 }
@@ -255,4 +229,34 @@ export function setSessionPaused(paused: boolean): Promise<SessionStatus> {
 /** The running session, if there is one. */
 export function getSessionStatus(): Promise<SessionStatus | null> {
   return callCommand("get_session_status", sessionStatusSchema.nullable());
+}
+
+/** Hide a floating overlay without ending the session. */
+export function hideOverlay(overlay: "captions" | "controller"): Promise<void> {
+  return callCommand("hide_overlay", voidResult, { overlay });
+}
+
+/** Bring the main window to the front, restoring session overlays with it. */
+export function openMainWindow(): Promise<void> {
+  return callCommand("open_main_window", voidResult);
+}
+
+/** Every saved session, newest first. */
+export function listSessions(): Promise<SessionSummary[]> {
+  return callCommand("list_sessions", z.array(sessionSummarySchema));
+}
+
+/** Every segment of one saved session. */
+export function getSessionTranscript(id: string): Promise<TranscriptSegment[]> {
+  return callCommand("get_session_transcript", z.array(transcriptSegmentSchema), { id });
+}
+
+/** Delete a saved session. */
+export function deleteSession(id: string): Promise<void> {
+  return callCommand("delete_session", voidResult, { id });
+}
+
+/** Export a session's transcript and reveal the file. Returns its path. */
+export function exportSession(id: string, format: ExportFormat): Promise<string> {
+  return callCommand("export_session", z.string(), { id, format });
 }

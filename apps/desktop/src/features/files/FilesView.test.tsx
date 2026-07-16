@@ -59,7 +59,6 @@ describe("FilesView", () => {
   });
 
   it("surfaces a backend failure instead of rendering an empty list", async () => {
-    // Silences the expected unhandled-rejection noise from the failing command.
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     mockIPC((command) => {

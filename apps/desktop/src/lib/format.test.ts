@@ -42,7 +42,6 @@ describe("formatWhen", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-15T12:00:00Z"));
 
-    // Two months back should render as a date, not "62d ago".
     expect(formatWhen("2026-05-15T12:00:00Z")).toMatch(/2026/);
   });
 

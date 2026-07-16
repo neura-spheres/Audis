@@ -130,11 +130,13 @@
     height: 100%;
   }
 
-  /* The caption overlay is a transparent, always-on-top window that floats over
-   * whatever the user is watching. It loads this same stylesheet, so without
-   * this the body below paints an opaque rectangle across the entire window and
-   * the "transparent" overlay is a black bar with a caption inside it. */
-  :root[data-audis-window="captions"] body {
+  /* The overlays — the caption bar and the controller chip — are transparent,
+   * always-on-top windows floating over whatever the user is watching. They
+   * load this same stylesheet, so without this the body below paints an opaque
+   * rectangle across the whole window and the "transparent" overlay becomes a
+   * black slab with content inside it. */
+  :root[data-audis-window="captions"] body,
+  :root[data-audis-window="controller"] body {
     background-color: transparent;
   }
 
@@ -205,6 +207,64 @@
       opacity: 0;
     }
     to {
+      opacity: 1;
+    }
+  }
+}
+
+/* The recording dot on the controller chip: a calm, steady pulse while a
+   session is live. Paused sessions freeze it (no animation), so motion always
+   means "listening right now". */
+@keyframes audis-rec-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+}
+
+/* Right-click menus appear instantly under the cursor; a slower fade would feel
+   laggy for a menu. A small scale-up reads as "popped up here". */
+@keyframes audis-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Hover feedback for the overlay controls. These live on transparent windows,
+   so the states are defined here rather than with theme tokens meant for the
+   opaque main window. */
+.audis-menu-item:hover,
+.audis-menu-item:focus-visible {
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+}
+
+.audis-chip-button {
+  transition: background-color 120ms ease;
+}
+
+.audis-chip-button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.audis-chip-button:active {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes audis-rec-pulse {
+    0%,
+    100% {
       opacity: 1;
     }
   }

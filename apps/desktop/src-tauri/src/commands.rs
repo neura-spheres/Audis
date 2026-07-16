@@ -1,7 +1,4 @@
 //! Tauri commands exposed to the frontend.
-//!
-//! Commands return `Result<T, AudisError>`. `AudisError` serialises as
-//! `UserFacingError`, so an internal message cannot reach the UI.
 
 use audis_common::{AppInfo, AppPaths, DataFileListing, Result, Settings, identity};
 use serde::Serialize;
@@ -20,9 +17,6 @@ pub struct AppState {
 }
 
 /// Identity and build information for the About page and diagnostics.
-///
-/// The version comes from the compiled binary rather than a frontend constant,
-/// so the About page cannot drift out of date after a release.
 #[tauri::command]
 pub fn get_app_info(state: State<'_, AppState>) -> Result<AppInfo> {
     Ok(AppInfo {
@@ -51,24 +45,17 @@ pub fn update_settings(
 ) -> Result<Settings> {
     let saved = state.settings.set(settings)?;
 
-    // Click-through is a window property, not something the page can style, so
-    // applying it is Rust's job. Without this the switch would save a value
-    // that never took effect.
     apply_caption_click_through(&app, saved.captions.click_through);
 
-    // Announced to every window, not just the one that made the change: the
-    // caption overlay renders from these and would otherwise keep showing the
-    // old size and opacity until Audis restarted.
     app.emit(audis_common::events::SETTINGS_CHANGED, &saved)
         .ok();
+
+    crate::shortcuts::apply(&app);
 
     Ok(saved)
 }
 
 /// Let clicks pass through the caption overlay to whatever is behind it.
-///
-/// Kept in one place because two callers need it: saving the setting, and
-/// starting a session, which is when the overlay first appears.
 pub fn apply_caption_click_through(app: &tauri::AppHandle, click_through: bool) {
     if let Some(window) = app.get_webview_window("captions")
         && let Err(error) = window.set_ignore_cursor_events(click_through)
@@ -84,9 +71,6 @@ pub fn list_data_files(state: State<'_, AppState>) -> Result<DataFileListing> {
 }
 
 /// Open a file with its default application.
-///
-/// `path` comes from the frontend and is therefore untrusted: it is resolved
-/// and confined to the data folder before anything is opened.
 #[tauri::command]
 pub fn open_data_file(
     app: tauri::AppHandle,
@@ -149,7 +133,6 @@ pub struct Diagnostics {
 /// Real environment information, gathered on demand.
 #[tauri::command]
 pub fn get_diagnostics(state: State<'_, AppState>) -> Result<Diagnostics> {
-    // A failed listing should not blank the whole page; report zeroes instead.
     let listing = data_files::list(&state.paths).unwrap_or_else(|error| {
         tracing::warn!(%error, "could not measure storage for diagnostics");
         DataFileListing {
@@ -185,9 +168,6 @@ pub fn list_audio_devices()
 }
 
 /// Start the audio test: open both captures and stream levels to the UI.
-///
-/// Returns which streams opened and why any failed. One source failing does not
-/// prevent the other from running.
 #[tauri::command]
 pub fn start_audio_test(
     app: tauri::AppHandle,
@@ -211,19 +191,12 @@ pub fn list_models(
     state: State<'_, AppState>,
     models: State<'_, std::sync::Arc<crate::model_store::ModelStore>>,
 ) -> Result<Vec<audis_common::InstalledModel>> {
-    // The recommendation depends on the language being recognised: Base is
-    // good at English and poor at Indonesian, so a single global "recommended"
-    // badge would mislead exactly the users Audis is built for.
     Ok(models.list(&state.paths, state.settings.get().transcription.language))
 }
 
 /// Download and install a model, reporting progress on `audis://model/progress`.
 #[tauri::command]
 pub async fn install_model(app: tauri::AppHandle, id: audis_common::ModelId) -> Result<()> {
-    // `State` guards are not `Send`, and this download runs for minutes, so
-    // everything needed is cloned out and the guards dropped before awaiting.
-    // The store is managed as an `Arc` precisely so this clone is cheap and
-    // safe rather than requiring a raw pointer.
     let (paths, store) = {
         let state = app.state::<AppState>();
         let models = app.state::<std::sync::Arc<crate::model_store::ModelStore>>();
@@ -243,9 +216,6 @@ pub fn cancel_model_download(
 }
 
 /// Whether a model download is currently running.
-///
-/// Lets the UI restore its progress state after a navigation, since a download
-/// outlives the view that started it.
 #[tauri::command]
 pub fn is_model_downloading(
     models: State<'_, std::sync::Arc<crate::model_store::ModelStore>>,
@@ -264,8 +234,6 @@ pub fn remove_model(
 }
 
 /// Every AI provider and whether a key is saved.
-///
-/// Reports only whether a key exists, never any part of its value.
 #[tauri::command]
 pub fn list_providers(state: State<'_, AppState>) -> Result<Vec<audis_common::ProviderStatus>> {
     let settings = state.settings.get();
@@ -290,18 +258,16 @@ pub fn list_providers(state: State<'_, AppState>) -> Result<Vec<audis_common::Pr
 }
 
 /// Save an API key to the OS credential store.
-///
-/// The key goes straight to the keystore and is never written to settings, a
-/// log, or anywhere Audis controls. There is deliberately no command to read it
-/// back.
 #[tauri::command]
 pub fn set_provider_key(id: audis_common::ProviderId, key: String) -> Result<()> {
+    tracing::info!(provider = ?id, "saving provider API key");
     crate::credentials::set_key(id, &key)
 }
 
 /// Delete a provider's API key.
 #[tauri::command]
 pub fn delete_provider_key(id: audis_common::ProviderId) -> Result<()> {
+    tracing::info!(provider = ?id, "deleting provider API key");
     crate::credentials::delete_key(id)
 }
 
@@ -354,9 +320,6 @@ pub fn list_features(
         .map(|id| {
             let (name, summary, details) = id.describe();
 
-            // Status is computed from what is actually on this machine rather
-            // than hardcoded, so the launcher cannot claim a feature works when
-            // its model or key is missing.
             let needs_ai = id.uses_cloud_ai();
 
             let (status, blocker) = if !has_model {
@@ -391,6 +354,8 @@ pub fn list_features(
 pub fn close_main_window(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<()> {
     use audis_common::settings::CloseBehavior;
 
+    crate::overlays::hide_all(&app);
+
     match state.settings.get().general.close_behavior {
         CloseBehavior::MinimizeToTray => {
             if let Some(window) = app.get_webview_window("main") {
@@ -399,6 +364,44 @@ pub fn close_main_window(app: tauri::AppHandle, state: State<'_, AppState>) -> R
         }
         CloseBehavior::Quit => app.exit(0),
     }
+    Ok(())
+}
+
+/// Hide one floating overlay, without ending the session.
+#[tauri::command]
+pub fn hide_overlay(app: tauri::AppHandle, overlay: String) -> Result<()> {
+    let which = match overlay.as_str() {
+        "captions" => crate::overlays::Overlay::Captions,
+        "controller" => crate::overlays::Overlay::Controller,
+        other => {
+            return Err(audis_common::AudisError::InvalidArgument {
+                field: "overlay".to_owned(),
+                detail: format!("unknown overlay {other:?}"),
+            });
+        }
+    };
+
+    crate::overlays::hide(&app, which);
+    Ok(())
+}
+
+/// Bring the main window to the front, showing it if it was hidden.
+#[tauri::command]
+pub fn open_main_window(
+    app: tauri::AppHandle,
+    session: State<'_, crate::session::SessionController>,
+) -> Result<()> {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+
+    if session.status().is_some() {
+        crate::overlays::show(&app, crate::overlays::Overlay::Captions);
+        crate::overlays::show(&app, crate::overlays::Overlay::Controller);
+    }
+
     Ok(())
 }
 
@@ -433,7 +436,6 @@ mod tests {
     }
 
     /// The frontend schema expects camelCase, so the serde rename is
-    /// load-bearing rather than cosmetic.
     #[test]
     fn app_info_serialises_as_camel_case_for_the_frontend() {
         let json = serde_json::to_value(sample_info()).expect("serialise AppInfo");
@@ -470,9 +472,6 @@ mod tests {
 }
 
 /// Start a live session for `feature`.
-///
-/// Resolves the model and devices from settings, so the UI does not have to
-/// know what a session needs.
 #[tauri::command]
 pub fn start_session(
     app: tauri::AppHandle,
@@ -501,10 +500,6 @@ pub fn start_session(
 }
 
 /// Build whatever the user chose to recognise speech with.
-///
-/// The key is read here and handed to the engine directly, never through
-/// settings and never back to the frontend: this is the one place in Audis that
-/// holds a plaintext key, and it holds it only for the life of the session.
 fn build_engine(
     state: &AppState,
     models: &std::sync::Arc<crate::model_store::ModelStore>,
@@ -514,6 +509,7 @@ fn build_engine(
 
     match &settings.transcription.engine {
         TranscriptionEngine::Local { model } => {
+            tracing::info!(?model, "building local speech engine");
             let path = models.path_if_installed(&state.paths, *model).ok_or(
                 audis_common::AudisError::Configuration {
                     detail: "no speech model is installed. Open Models and install Whisper Base."
@@ -521,25 +517,22 @@ fn build_engine(
                 },
             )?;
 
-            // Loading is seconds of work and allocates the whole model. Doing it
-            // here means a missing or corrupt file fails before any device is
-            // opened, rather than half-starting a session.
             let engine = audis_asr::WhisperEngine::load(&path).map_err(as_configuration)?;
             Ok(Box::new(engine))
         }
 
         TranscriptionEngine::Cloud { provider, model } => {
+            tracing::info!(?provider, %model, "building cloud speech engine");
             let key = crate::credentials::get_key(*provider)?.ok_or(
                 audis_common::AudisError::Configuration {
                     detail: format!(
-                        "Audis is set to transcribe with {}, but no API key is saved for it.                          Open Providers to add one.",
+                        "Audis is set to transcribe with {}, but no API key is saved for it. \
+                         Open Providers to add one.",
                         provider.info().name
                     ),
                 },
             )?;
 
-            // A user-supplied endpoint only matters for providers that need one;
-            // CloudEngine ignores it otherwise.
             let endpoint = settings
                 .providers
                 .iter()
@@ -554,14 +547,6 @@ fn build_engine(
 }
 
 /// Carry an ASR failure out through a command.
-///
-/// `AsrError` already knows how to explain itself to a user, but a command
-/// returns `AudisError`, which has no variant that can hold a ready-made
-/// message. The explanation is passed through as the detail so the words the
-/// user reads are still the specific ones — "could not reach Groq", not a
-/// generic failure — even though the surrounding frame says configuration.
-/// Giving `AudisError` a variant that wraps a `UserFacingError` would be the
-/// better fix and is a wider change than this one.
 fn as_configuration(error: audis_asr::AsrError) -> audis_common::AudisError {
     let facing = error.to_user_facing();
     audis_common::AudisError::Configuration {
@@ -594,4 +579,199 @@ pub fn get_session_status(
     session: State<'_, crate::session::SessionController>,
 ) -> Result<Option<audis_common::SessionStatus>> {
     Ok(session.status())
+}
+
+/// Every saved session, newest first.
+#[tauri::command]
+pub fn list_sessions(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::transcript_store::SessionSummary>> {
+    Ok(crate::transcript_store::list_summaries(&state.paths))
+}
+
+/// Every segment of one saved session.
+#[tauri::command]
+pub fn get_session_transcript(
+    state: State<'_, AppState>,
+    id: uuid::Uuid,
+) -> Result<Vec<audis_common::TranscriptSegment>> {
+    crate::transcript_store::read_segments(&state.paths, id)
+}
+
+/// Delete a saved session.
+#[tauri::command]
+pub fn delete_session(state: State<'_, AppState>, id: uuid::Uuid) -> Result<()> {
+    tracing::info!(%id, "deleting session");
+    crate::transcript_store::delete(&state.paths, id)
+}
+
+/// Export a session's transcript and reveal the file.
+#[tauri::command]
+pub fn export_session(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: uuid::Uuid,
+    format: crate::transcript_store::ExportFormat,
+) -> Result<String> {
+    tracing::info!(%id, ?format, "exporting session transcript");
+    let path = crate::transcript_store::export(&state.paths, id, format)?;
+    app.opener().reveal_item_in_dir(&path).ok();
+    Ok(path.display().to_string())
+}
+
+/// Answer a question with the assistant, using the transcript as context.
+///
+/// Returns an empty string when the assistant decides the line was not a real
+/// question, so the caller can simply show nothing.
+#[tauri::command]
+pub async fn ask_assistant(
+    app: tauri::AppHandle,
+    question: String,
+    transcript: Vec<String>,
+) -> Result<String> {
+    let (provider, model, endpoint, key, system) = {
+        let state = app.state::<AppState>();
+        let settings = state.settings.get();
+        let assistant = settings.assistant;
+
+        let key = crate::credentials::get_key(assistant.provider)?.ok_or(
+            audis_common::AudisError::Configuration {
+                detail: format!(
+                    "The assistant is set to use {}, but no API key is saved for it. Open \
+                     Providers to add one.",
+                    assistant.provider.info().name
+                ),
+            },
+        )?;
+
+        let endpoint = settings
+            .providers
+            .iter()
+            .find(|config| config.id == assistant.provider)
+            .and_then(|config| config.endpoint.clone());
+
+        let system = assistant_system_prompt(assistant.context, &assistant.notes);
+        (assistant.provider, assistant.model, endpoint, key, system)
+    };
+
+    let user = format!(
+        "Recent transcript:\n{}\n\nLatest line / question:\n{question}",
+        transcript.join("\n")
+    );
+
+    tracing::info!(?provider, %model, "asking the assistant");
+
+    tauri::async_runtime::spawn_blocking(move || {
+        audis_asr::chat(provider, endpoint, key, &model, &system, &user)
+    })
+    .await
+    .map_err(|error| audis_common::AudisError::Configuration {
+        detail: format!("the assistant request could not run: {error}"),
+    })?
+    .map(|answer| {
+        // The prompt tells the model to reply NONE when the line was not a real
+        // question; turn that into an empty answer the UI simply hides.
+        if answer.trim().eq_ignore_ascii_case("none") {
+            String::new()
+        } else {
+            answer.trim().to_owned()
+        }
+    })
+    .map_err(as_configuration)
+}
+
+fn assistant_system_prompt(context: audis_common::AssistantContext, notes: &str) -> String {
+    use audis_common::AssistantContext::*;
+
+    let role = match context {
+        General => {
+            "You help someone during a live conversation. When a question is asked, answer it \
+             briefly and accurately."
+        }
+        Meeting => {
+            "You assist during a live meeting. When a question comes up, give a concise, factual \
+             answer or the relevant information."
+        }
+        Interview => {
+            "You are helping the user, who is the candidate in a live job interview. When the \
+             interviewer asks a question, suggest a strong, concise, well-structured answer the \
+             user could give in first person."
+        }
+        Quiz => {
+            "You are helping the user during a live quiz or test. Give the correct answer \
+             concisely, with a one-line reason."
+        }
+        Lecture => {
+            "You assist a student during a live lecture. Answer questions and clarify concepts \
+             briefly."
+        }
+    };
+
+    let mut prompt = format!(
+        "{role}\n\nYou are given the recent transcript of the session. Answer the latest question \
+         in at most three sentences. If the latest line is not actually a question that needs an \
+         answer, reply with exactly: NONE"
+    );
+
+    if !notes.trim().is_empty() {
+        prompt.push_str(&format!(
+            "\n\nExtra context about this session: {}",
+            notes.trim()
+        ));
+    }
+
+    prompt
+}
+
+/// What a fetched model list is for, as the frontend names it.
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ModelPurpose {
+    /// Models that transcribe audio.
+    Speech,
+    /// Models that hold a conversation.
+    Chat,
+}
+
+impl From<ModelPurpose> for audis_asr::ModelPurpose {
+    fn from(purpose: ModelPurpose) -> Self {
+        match purpose {
+            ModelPurpose::Speech => Self::Speech,
+            ModelPurpose::Chat => Self::Chat,
+        }
+    }
+}
+
+/// Ask a provider for its current model list, filtered to `purpose`.
+#[tauri::command]
+pub async fn list_provider_models(
+    app: tauri::AppHandle,
+    provider: audis_common::ProviderId,
+    purpose: ModelPurpose,
+) -> Result<Vec<String>> {
+    let (endpoint, key) = {
+        let state = app.state::<AppState>();
+        let endpoint = state
+            .settings
+            .get()
+            .providers
+            .iter()
+            .find(|config| config.id == provider)
+            .and_then(|config| config.endpoint.clone());
+        let key = crate::credentials::get_key(provider)?.ok_or(
+            audis_common::AudisError::Configuration {
+                detail: format!("no API key saved for {}", provider.info().name),
+            },
+        )?;
+        (endpoint, key)
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        audis_asr::fetch_models(provider, endpoint, key, purpose.into())
+    })
+    .await
+    .map_err(|error| audis_common::AudisError::Configuration {
+        detail: format!("could not fetch the model list: {error}"),
+    })?
+    .map_err(as_configuration)
 }

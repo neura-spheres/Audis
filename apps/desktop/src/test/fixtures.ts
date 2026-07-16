@@ -9,11 +9,7 @@ import type {
   ProviderStatus,
 } from "@/schemas/ipc";
 
-/**
- * Fixtures for the dev mock and component tests. Kept identical in shape to
- * what the Rust commands return, so a test cannot pass against something the
- * real backend would never produce.
- */
+/** Fixtures for the dev mock and component tests. Kept identical in shape to */
 
 export const AUDIS_APP_INFO_MOCK: AppInfo = {
   appName: "Audis",
@@ -140,24 +136,15 @@ export const AUDIS_PROVIDERS_MOCK: ProviderStatus[] = [
   },
 ];
 
-/**
- * Wrap an IPC handler so event subscriptions and session polling succeed.
- *
- * Any component using `subscribe` or `useSession` calls `plugin:event|listen`
- * and `get_session_status`. A test that only mocks its own commands would see
- * those as unexpected and reject, which surfaces as an unhandled rejection
- * rather than a clear failure. This handles the ambient calls so a test only
- * declares what it actually cares about.
- */
+/** Wrap an IPC handler so event subscriptions and session polling succeed. */
 export function withAmbientIpc(
   handler: (command: string, args?: InvokeArgs) => unknown,
 ): (command: string, args?: InvokeArgs) => unknown {
   return (command, args) => {
-    // Tauri's event plugin. Returning an id is enough; nothing unsubscribes in
-    // a test that has already finished.
     if (command === "plugin:event|listen") return 1;
     if (command === "plugin:event|unlisten") return null;
     if (command === "get_session_status") return null;
+    if (command === "list_provider_models") return [];
 
     return handler(command, args);
   };

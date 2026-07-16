@@ -37,6 +37,7 @@ tauri = { version = "2.11.5", features = ["tray-icon", "image-png"] }
 tauri-plugin-single-instance = "2.4.3"
 tauri-plugin-opener = "2.5.4"
 tauri-plugin-os = "2.3.2"
+tauri-plugin-global-shortcut = "2"
 
 [dev-dependencies]
 tempfile = "3"

@@ -2,11 +2,7 @@ import { useState } from "react";
 
 import type { UserFacingError } from "@/schemas/ipc";
 
-/**
- * Renders a UserFacingError: what happened, whether the data survived, and one
- * next step. Technical detail stays folded away so an ordinary user never meets
- * a stack trace but support can still get one.
- */
+/** Renders a UserFacingError: what happened, whether the data survived, and one */
 export function ErrorNotice({ error }: { error: UserFacingError }) {
   const [showDetails, setShowDetails] = useState(false);
 
@@ -27,8 +23,6 @@ export function ErrorNotice({ error }: { error: UserFacingError }) {
         </p>
       </div>
 
-      {/* Status carries an icon as well as colour, so it still reads for
-          colour-blind users. */}
       <p
         className="flex items-center gap-1.5 text-footnote"
         style={{ color: error.dataPreserved ? "var(--color-success)" : "var(--color-danger)" }}

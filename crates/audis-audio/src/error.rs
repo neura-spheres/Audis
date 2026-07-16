@@ -133,8 +133,6 @@ mod tests {
 
     #[test]
     fn no_audio_error_ever_claims_data_was_lost() {
-        // Capture failures happen before anything is written, so every one of
-        // these must reassure the user rather than alarm them.
         let errors = [
             AudioError::Enumeration {
                 detail: "x".to_owned(),
@@ -164,7 +162,6 @@ mod tests {
     }
 
     /// A denied microphone is the most common real failure, so its advice must
-    /// actually mention the Windows setting that causes it.
     #[test]
     fn a_blocked_device_tells_the_user_where_to_look() {
         let shown = AudioError::StreamStart {

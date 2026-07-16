@@ -16,21 +16,19 @@ import { FeaturesView } from "@/features/launcher/FeaturesView";
 import { ModelsView } from "@/features/models/ModelsView";
 import { ProvidersView } from "@/features/providers/ProvidersView";
 import { TranscriptionView } from "@/features/transcription/TranscriptionView";
-import {
-  AssistantView,
-  ShortcutsView,
-  SpeakersView,
-  UpdatesView,
-} from "@/features/settings/PlannedViews";
+import { ShortcutsView } from "@/features/shortcuts/ShortcutsView";
+import { AssistantView } from "@/features/assistant/AssistantView";
+import { useAssistantEngine } from "@/features/assistant/useAssistantEngine";
+import { SpeakersView, UpdatesView } from "@/features/settings/PlannedViews";
 
-/**
- * Main window shell: a source list on the left, a titled content pane on the
- * right. Navigation is local state rather than a router, since a desktop app
- * has no URLs and nothing here needs a history model.
- */
+/** Main window shell: a source list on the left, a titled content pane on the */
 export function App() {
   const [activeId, setActiveId] = useState<ViewId>("dashboard");
   const active = findNavItem(activeId);
+
+  // Runs the assistant whatever view is open, so answers keep coming while you
+  // watch the transcript rather than only on the assistant screen.
+  useAssistantEngine();
 
   return (
     <div className="flex h-full w-full overflow-hidden">
@@ -54,8 +52,6 @@ export function App() {
           </h1>
         </header>
 
-        {/* `key` remounts the pane on navigation, so each view refetches and
-            no stale state bleeds between sections. */}
         <div key={activeId} className="flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-[760px] px-6 py-6">
             {renderView(activeId, setActiveId)}

@@ -6,19 +6,14 @@ import { ExternalIcon } from "@/components/icons";
 import {
   deleteProviderKey,
   listProviders,
+  listProviderModels,
   setProviderKey,
   updateProvider,
   AudisIpcError,
 } from "@/services/ipc";
 import type { ProviderStatus, UserFacingError } from "@/schemas/ipc";
 
-/**
- * Connect AI providers.
- *
- * A saved key is never shown again, not even partially: Rust reports only
- * whether one exists, and there is no command that could return the value. The
- * flow for a wrong key is to replace it, not to inspect it.
- */
+/** Connect AI providers. */
 export function ProvidersView() {
   const [providers, setProviders] = useState<ProviderStatus[]>();
   const [error, setError] = useState<UserFacingError>();
@@ -72,14 +67,28 @@ function ProviderCard({
   const [keyInput, setKeyInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [endpoint, setEndpoint] = useState(provider.endpoint ?? "");
+  const [liveModels, setLiveModels] = useState<string[]>();
+
+  useEffect(() => {
+    if (!provider.hasKey) return;
+    let active = true;
+    listProviderModels(info.id, "chat")
+      .then((models) => {
+        if (active && models.length > 0) setLiveModels(models);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [provider.hasKey, info.id]);
+
+  const models = liveModels ?? info.models;
 
   const saveKey = () => {
     if (!keyInput.trim()) return;
     setSaving(true);
     setProviderKey(info.id, keyInput)
       .then(() => {
-        // Cleared immediately: the key has no reason to remain in a React state
-        // tree, a re-render, or a devtools snapshot once Rust has it.
         setKeyInput("");
         onChanged();
       })
@@ -156,7 +165,7 @@ function ProviderCard({
         </label>
       ) : null}
 
-      {info.models.length > 0 ? (
+      {models.length > 0 ? (
         <label className="flex items-center justify-between gap-3">
           <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
             Model
@@ -167,7 +176,7 @@ function ProviderCard({
             className="px-2.5 py-[5px] text-footnote"
             style={inputStyle}
           >
-            {info.models.map((model) => (
+            {[...new Set([provider.model, ...models])].map((model) => (
               <option key={model} value={model}>
                 {model}
               </option>
@@ -183,8 +192,6 @@ function ProviderCard({
               {provider.hasKey ? "Replace API key" : "API key"}
             </span>
             <input
-              // type=password so a key is not shoulder-surfed or captured in a
-              // screen recording while being pasted.
               type="password"
               value={keyInput}
               onChange={(event) => setKeyInput(event.target.value)}

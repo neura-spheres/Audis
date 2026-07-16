@@ -1,8 +1,4 @@
 //! Installing and removing local speech models.
-//!
-//! Downloads stream to a temporary file and are renamed into place only once
-//! complete. A half-downloaded model that looked installed would fail at the
-//! worst possible moment, when the user starts a session.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,9 +11,6 @@ use tauri::{AppHandle, Emitter};
 pub const MODEL_PROGRESS_EVENT: &str = "audis://model/progress";
 
 /// How often progress is reported, in bytes.
-///
-/// Emitting per chunk would flood the WebView with thousands of events for a
-/// 1.5 GB model and stall the UI it is trying to update.
 const PROGRESS_INTERVAL_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Tracks the download in flight, if any.
@@ -38,7 +31,6 @@ impl ModelStore {
                 let installed_bytes = std::fs::metadata(&path).ok().map(|meta| meta.len());
 
                 InstalledModel {
-                    // A zero-byte file is a failed download, not an install.
                     installed: installed_bytes.is_some_and(|bytes| bytes > 0),
                     installed_bytes,
                     info,
@@ -123,8 +115,6 @@ impl ModelStore {
             source,
         })?;
 
-        // Staged in the models folder rather than the temp folder, so the
-        // rename below stays on one volume and therefore stays atomic.
         let staging = models_dir.join(format!("{file_name}.partial"));
 
         let response = reqwest::get(id.url())
@@ -139,8 +129,6 @@ impl ModelStore {
             });
         }
 
-        // The server's length, not the catalogue's: the catalogue figure is for
-        // display and may drift when a model is republished.
         let total_bytes = response.content_length();
 
         let mut file = std::fs::File::create(&staging).map_err(|source| AudisError::Io {
@@ -198,8 +186,6 @@ impl ModelStore {
         })?;
         drop(file);
 
-        // A truncated file that is renamed into place would look installed and
-        // then fail when a session starts, which is the worst time to find out.
         if let Some(expected) = total_bytes
             && downloaded != expected
         {
@@ -240,7 +226,6 @@ impl ModelStore {
                 tracing::info!(?id, "model removed");
                 Ok(())
             }
-            // Already gone is the outcome the user wanted.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(source) => Err(AudisError::Io {
                 path,
@@ -305,7 +290,6 @@ mod tests {
     }
 
     /// A zero-byte file is what a failed download leaves behind. Treating it as
-    /// installed would fail at session start instead of at install time.
     #[test]
     fn an_empty_file_is_not_an_installed_model() {
         let (_guard, paths) = temp_paths();
@@ -340,7 +324,6 @@ mod tests {
         store.remove(&paths, ModelId::WhisperBase).expect("remove");
         assert!(!path.exists());
 
-        // Removing something already gone is success, not an error.
         store
             .remove(&paths, ModelId::WhisperBase)
             .expect("second remove must succeed");

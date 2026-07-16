@@ -1,20 +1,4 @@
 //! The live session pipeline.
-//!
-//! This is the path a spoken word takes to the screen:
-//!
-//! ```text
-//! capture (48 kHz, stereo, device thread)
-//!   -> frame channel (bounded, never blocks the audio thread)
-//!   -> prepare thread: downmix -> stateful resample to 16 kHz -> endpointer
-//!   -> utterance channel
-//!   -> recognise thread: Whisper -> TRANSCRIPT_FINAL
-//! ```
-//!
-//! Each source gets its own capture and prepare thread, but both feed one
-//! recognise thread. That is deliberate: a Whisper context is large and
-//! CPU-bound, so two would double memory and fight for the same cores.
-//! Attribution survives because the utterance carries its source, which is the
-//! device it arrived on rather than a guess.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
@@ -26,38 +10,34 @@ use audis_common::{
     AsrState, AsrStatus, AudioSourceKind, AudisError, DiagnosticWarning, Language, Result,
     SessionMode, SessionState, SessionStatus, TranscriptSegment, events,
 };
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 /// How many frame blocks may wait for the prepare thread.
-///
-/// Roughly a second of audio. If the prepare thread ever fell this far behind,
-/// dropping the oldest audio is better than growing without bound or, far
-/// worse, blocking the real-time audio callback.
 const FRAME_QUEUE_DEPTH: usize = 64;
 
 /// How many utterances may wait to be recognised.
-///
-/// Whisper is roughly real-time, so this only fills if the machine is briefly
-/// overloaded. It is deep enough to ride that out and shallow enough that the
-/// user never sees minutes-stale captions.
 const UTTERANCE_QUEUE_DEPTH: usize = 32;
 
 /// How often an in-progress sentence is offered for an interim caption.
+const PARTIAL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// Least time between interim requests to a cloud provider.
 ///
-/// Not how often one is decoded: interim work only happens when the recogniser
-/// has nothing final waiting, so on a loaded machine these are simply skipped.
-/// Fast enough to feel live, slow enough not to spend the whole CPU budget
-/// re-decoding the same words.
-const PARTIAL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(600);
+/// Interim previews are billed round-trips against a rate limit, so a cloud
+/// engine only sends one at most this often. A stale preview is dropped rather
+/// than sent, and a rate-limited one is skipped, so finals never suffer.
+const CLOUD_INTERIM_MIN: std::time::Duration = std::time::Duration::from_millis(3000);
+
+/// The silence gate a cloud engine ends an utterance on.
+///
+/// Shorter than the local gate: a large hosted model does not need the extra
+/// context a local model does, so finals can be cut sooner and appear sooner.
+const CLOUD_SILENCE_MS: u32 = 500;
 
 /// What to start, gathered from settings by the caller.
 pub struct SessionRequest {
     /// The engine that will recognise speech, already built and ready.
-    ///
-    /// Built by the caller rather than here: choosing between a local model and
-    /// a provider needs settings and the keystore, and the pipeline downstream
-    /// is identical either way.
     pub engine: Box<dyn AsrEngine>,
     /// Where sessions are stored, when this mode saves one.
     pub paths: audis_common::AppPaths,
@@ -82,11 +62,6 @@ struct SourcedUtterance {
 }
 
 /// The newest sentence-in-progress waiting for an interim decode.
-///
-/// A single slot rather than a queue, and deliberately so: an interim caption
-/// is only worth showing if it is the latest thing said. A queue would decode
-/// stale audio and show words the speaker has already moved past. Newest wins,
-/// older ones are simply dropped.
 type PartialSlot = Arc<Mutex<Option<SourcedUtterance>>>;
 
 /// Everything a running session owns.
@@ -102,7 +77,6 @@ struct Running {
     /// Set to stop every worker thread.
     stop: Arc<AtomicBool>,
     /// True while paused. Audio keeps flowing and is discarded, which keeps the
-    /// device open so resuming is instant.
     paused: Arc<AtomicBool>,
     /// Dropping these stops capture.
     captures: Vec<audis_audio::CaptureHandle>,
@@ -119,9 +93,6 @@ pub struct SessionController {
 
 impl SessionController {
     /// Start a session.
-    ///
-    /// The model is loaded before any device is opened, so a missing model
-    /// fails cleanly with nothing half-started.
     pub fn start(&self, app: &AppHandle, request: SessionRequest) -> Result<SessionStatus> {
         let SessionRequest {
             engine,
@@ -165,9 +136,6 @@ impl SessionController {
             false,
         );
 
-        // Live Caption promises nothing is written to disk, so no writer is
-        // constructed for it at all. Opened before any device so a disk failure
-        // leaves no capture running.
         let writer = if mode.persists_transcript() {
             Some(crate::transcript_store::SessionWriter::create(
                 &paths, id, mode, language,
@@ -184,7 +152,15 @@ impl SessionController {
         let mut captures = Vec::new();
         let mut workers = Vec::new();
 
-        // The recogniser owns the engine and serialises both sources.
+        let endpoint_config = if engine.capabilities().offline {
+            EndpointConfig::default()
+        } else {
+            EndpointConfig {
+                silence_ms: CLOUD_SILENCE_MS,
+                ..EndpointConfig::default()
+            }
+        };
+
         workers.push(
             spawn_recogniser(RecogniserSetup {
                 app: app.clone(),
@@ -213,6 +189,7 @@ impl SessionController {
                 Arc::clone(&partial),
                 Arc::clone(&stop),
                 Arc::clone(&paused),
+                endpoint_config,
             ) {
                 Ok((capture, worker)) => {
                     captures.push(capture);
@@ -220,8 +197,6 @@ impl SessionController {
                     started_microphone = true;
                 }
                 Err(error) => {
-                    // One source failing must not kill the other: a missing
-                    // microphone should still let you caption a video.
                     tracing::warn!(%error, "microphone capture could not start");
                     emit_source_failed(app, AudioSourceKind::Microphone, &error);
                 }
@@ -237,6 +212,7 @@ impl SessionController {
                 Arc::clone(&partial),
                 Arc::clone(&stop),
                 Arc::clone(&paused),
+                endpoint_config,
             ) {
                 Ok((capture, worker)) => {
                     captures.push(capture);
@@ -250,8 +226,6 @@ impl SessionController {
             }
         }
 
-        // Dropping the last sender is what tells the recogniser to finish, so
-        // the template copy must not outlive the sources.
         drop(utterance_tx);
 
         if !started_microphone && !started_computer_audio {
@@ -303,7 +277,9 @@ impl SessionController {
             computer_audio: started_computer_audio,
         });
 
-        show_captions(app, true);
+        crate::overlays::show(app, crate::overlays::Overlay::Captions);
+        crate::overlays::show(app, crate::overlays::Overlay::Controller);
+
         app.emit(events::SESSION_STATE, &status).ok();
         tracing::info!(%id, ?mode, "session started");
 
@@ -311,7 +287,6 @@ impl SessionController {
     }
 
     /// Pause or resume. Audio keeps flowing while paused and is discarded, so
-    /// the device stays open and resuming is instant.
     pub fn set_paused(&self, app: &AppHandle, pause: bool) -> Result<SessionStatus> {
         let mut guard = self.lock();
         let running = guard.as_mut().ok_or_else(no_session)?;
@@ -362,8 +337,6 @@ impl SessionController {
         );
 
         running.stop.store(true, Ordering::SeqCst);
-        // Dropping the captures closes the frame channels, which is what ends
-        // the prepare threads, which ends the recogniser.
         running.captures.clear();
 
         for worker in running.workers.drain(..) {
@@ -383,7 +356,7 @@ impl SessionController {
             error: None,
         };
 
-        show_captions(app, false);
+        crate::overlays::hide_all(app);
         app.emit(events::SESSION_STATE, &status).ok();
         tracing::info!(%id, elapsed_ms = elapsed, "session stopped");
 
@@ -396,8 +369,6 @@ impl SessionController {
     }
 
     /// A poisoned lock means a worker panicked while holding it. The session is
-    /// still recoverable: take the state back rather than propagating a panic
-    /// into every later command.
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<Running>> {
         self.inner.lock().unwrap_or_else(|poisoned| {
             tracing::error!("session lock was poisoned; recovering");
@@ -447,6 +418,7 @@ impl Running {
 }
 
 /// Open one capture and spawn the thread that prepares its audio.
+#[allow(clippy::too_many_arguments)]
 fn start_source(
     app: &AppHandle,
     source: AudioSourceKind,
@@ -455,15 +427,13 @@ fn start_source(
     partial: PartialSlot,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    endpoint_config: EndpointConfig,
 ) -> std::result::Result<(audis_audio::CaptureHandle, JoinHandle<()>), audis_audio::AudioError> {
     let (frame_tx, frame_rx) = sync_channel::<Vec<f32>>(FRAME_QUEUE_DEPTH);
     let dropped = Arc::new(AtomicU64::new(0));
 
     let sink_dropped = Arc::clone(&dropped);
     let sink: audis_audio::FrameSink = Arc::new(move |data: &[f32]| {
-        // This runs on the real-time audio thread. `try_send` never blocks, so
-        // a stalled consumer costs audio rather than glitching the device for
-        // every application on the machine.
         if frame_tx.try_send(data.to_vec()).is_err() {
             sink_dropped.fetch_add(1, Ordering::Relaxed);
         }
@@ -487,6 +457,7 @@ fn start_source(
         stop,
         paused,
         dropped,
+        endpoint_config,
     )
     .map_err(|error| audis_audio::AudioError::StreamStart {
         device: capture.device_name().to_owned(),
@@ -509,15 +480,13 @@ fn spawn_prepare(
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     dropped: Arc<AtomicU64>,
+    endpoint_config: EndpointConfig,
 ) -> std::io::Result<JoinHandle<()>> {
     std::thread::Builder::new()
         .name(format!("audis-prepare-{source:?}"))
         .spawn(move || {
-            // One resampler for the whole session. It carries filter history
-            // across blocks, which is what keeps the 50-per-second block seams
-            // from becoming audible clicks and wrecking recognition.
             let mut resampler = Resampler::new(sample_rate);
-            let mut endpointer = Endpointer::new(EndpointConfig::default());
+            let mut endpointer = Endpointer::new(endpoint_config);
             let mut reported_drops = 0u64;
             let mut last_partial = std::time::Instant::now();
 
@@ -526,8 +495,6 @@ fn spawn_prepare(
                     break;
                 }
 
-                // Discard while paused, but keep pulling frames so the channel
-                // never backs up and the device stays open.
                 if paused.load(Ordering::SeqCst) {
                     continue;
                 }
@@ -540,9 +507,6 @@ fn spawn_prepare(
 
                 let event = endpointer.push(&ready);
 
-                // Offer the sentence so far for an interim caption. Throttled,
-                // and only ever an offer: the recogniser picks it up if it has
-                // nothing final to do, and drops it otherwise.
                 if matches!(
                     event,
                     EndpointEvent::SpeechStarted | EndpointEvent::Speaking
@@ -558,16 +522,12 @@ fn spawn_prepare(
                     }
                 }
 
-                if let EndpointEvent::Utterance(utterance) = event {
-                    // A full queue means recognition is behind. Dropping the
-                    // utterance keeps captions current instead of stalling
-                    // capture to deliver minutes-old text.
-                    if utterances
+                if let EndpointEvent::Utterance(utterance) = event
+                    && utterances
                         .try_send(SourcedUtterance { source, utterance })
                         .is_err()
-                    {
-                        tracing::warn!(?source, "recognition is behind; dropped an utterance");
-                    }
+                {
+                    tracing::warn!(?source, "recognition is behind; dropped an utterance");
                 }
 
                 let total = dropped.load(Ordering::Relaxed);
@@ -587,8 +547,6 @@ fn spawn_prepare(
                 }
             }
 
-            // Whatever was mid-sentence when the user pressed stop is still
-            // worth transcribing.
             if let Some(utterance) = endpointer.flush() {
                 let _ = utterances.try_send(SourcedUtterance { source, utterance });
             }
@@ -629,6 +587,13 @@ fn spawn_recogniser(setup: RecogniserSetup) -> std::io::Result<JoinHandle<()>> {
         .spawn(move || {
             let engine_id = engine.id().to_owned();
 
+            let interim_min = if engine.capabilities().offline {
+                std::time::Duration::ZERO
+            } else {
+                CLOUD_INTERIM_MIN
+            };
+            let mut last_interim: Option<std::time::Instant> = None;
+
             for source in [AudioSourceKind::Microphone, AudioSourceKind::ComputerAudio] {
                 emit_asr_status(&app, source, AsrState::Listening, &engine_id, None);
             }
@@ -638,11 +603,6 @@ fn spawn_recogniser(setup: RecogniserSetup) -> std::io::Result<JoinHandle<()>> {
                     break;
                 }
 
-                // Finished sentences always win. An interim caption is a nicety;
-                // a finished one is the product. So interim work only happens
-                // with nothing final waiting, and on a machine that cannot keep
-                // up the interim captions quietly stop while the real ones keep
-                // arriving on time.
                 match utterances.try_recv() {
                     Ok(SourcedUtterance { source, utterance }) => {
                         decode_final(
@@ -661,22 +621,23 @@ fn spawn_recogniser(setup: RecogniserSetup) -> std::io::Result<JoinHandle<()>> {
                     Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 }
 
-                // Idle: spend the time on the sentence being spoken right now.
-                let waiting = partial.lock().ok().and_then(|mut slot| slot.take());
-                if let Some(SourcedUtterance { source, utterance }) = waiting {
-                    decode_partial(
-                        &app,
-                        engine.as_mut(),
-                        session_id,
-                        language,
-                        source,
-                        &utterance,
-                    );
-                    continue;
+                let ready_for_interim = last_interim.is_none_or(|at| at.elapsed() >= interim_min);
+                if ready_for_interim {
+                    let waiting = partial.lock().ok().and_then(|mut slot| slot.take());
+                    if let Some(SourcedUtterance { source, utterance }) = waiting {
+                        decode_partial(
+                            &app,
+                            engine.as_mut(),
+                            session_id,
+                            language,
+                            source,
+                            &utterance,
+                        );
+                        last_interim = Some(std::time::Instant::now());
+                        continue;
+                    }
                 }
 
-                // Genuinely nothing to do. Block rather than spin, but wake
-                // often enough to notice a new sentence starting.
                 match utterances.recv_timeout(std::time::Duration::from_millis(40)) {
                     Ok(SourcedUtterance { source, utterance }) => decode_final(
                         &app,
@@ -710,9 +671,6 @@ fn spawn_recogniser(setup: RecogniserSetup) -> std::io::Result<JoinHandle<()>> {
 }
 
 /// Recognise a finished sentence, save it, and publish it.
-///
-/// This is the product: everything here is durable and is what the user reads
-/// afterwards.
 #[allow(clippy::too_many_arguments)]
 fn decode_final(
     app: &AppHandle,
@@ -729,7 +687,6 @@ fn decode_final(
     let result = match engine.transcribe(utterance, language) {
         Ok(result) => result,
         Err(error) => {
-            // One bad utterance must not end the session.
             tracing::warn!(%error, ?source, "an utterance could not be recognised");
             emit_asr_status(
                 app,
@@ -756,19 +713,20 @@ fn decode_final(
         engine: engine_id.to_owned(),
     };
 
-    // Whisper emits "Thank you." and subtitle credits for silence. Publishing
-    // that would put words in someone's mouth, so it is dropped rather than
-    // shown.
     if segment.is_empty_speech() {
-        tracing::debug!(text = %segment.text, "dropped a silence hallucination");
+        tracing::debug!(?source, "dropped a silence hallucination");
+        tracing::trace!(text = %segment.text, "hallucination text");
         emit_asr_status(app, source, AsrState::Listening, engine_id, None);
         return;
     }
 
-    // Saved before it is shown. A failing disk should surface now rather than
-    // after an hour of captions the user believed were being recorded. Captions
-    // continue either way: losing the recording is bad, losing the live session
-    // too would be worse.
+    tracing::debug!(
+        ?source,
+        chars = segment.text.chars().count(),
+        confidence = ?segment.confidence,
+        "final segment recognised"
+    );
+
     if let Some(Err(error)) = writer.map(|file| file.append(&segment)) {
         tracing::error!(%error, "a segment could not be saved");
         app.emit(
@@ -788,17 +746,6 @@ fn decode_final(
 }
 
 /// Recognise a sentence still being spoken and publish it as interim text.
-///
-/// Deliberately does less than [`decode_final`]:
-///
-/// - It is **never written to disk.** This text will be superseded within the
-///   second, and a transcript full of half-sentences would be worse than one
-///   that waited. The saved transcript only ever contains finished sentences.
-/// - It does **not** touch the ASR status, which would flicker between
-///   Recognising and Listening several times a second.
-/// - It still drops hallucinations, because the whole point is that a person is
-///   reading this: showing invented words and retracting them is worse than
-///   showing nothing for another moment.
 fn decode_partial(
     app: &AppHandle,
     engine: &mut dyn AsrEngine,
@@ -808,8 +755,6 @@ fn decode_partial(
     utterance: &audis_asr::Utterance,
 ) {
     let Ok(result) = engine.transcribe(utterance, language) else {
-        // Interim text is best-effort by definition. A failure here is not
-        // worth a warning: the finished sentence will be along shortly.
         return;
     };
 
@@ -831,16 +776,13 @@ fn decode_partial(
         return;
     }
 
-    // Interim captions are the one part of the pipeline with no lasting trace:
-    // nothing is saved and the text is replaced within the second. Without a
-    // line here there is no way to tell "interim captions are off" from
-    // "interim captions are being skipped because the CPU is saturated".
     tracing::debug!(
         ?source,
         audio_ms = utterance.end_ms - utterance.start_ms,
-        text = %segment.text,
+        chars = segment.text.chars().count(),
         "interim caption"
     );
+    tracing::trace!(text = %segment.text, "interim caption text");
 
     app.emit(events::TRANSCRIPT_PARTIAL, &segment).ok();
 }
@@ -903,58 +845,6 @@ fn emit_state(
     .ok();
 }
 
-/// Show or hide the caption overlay.
-///
-/// Positioned along the bottom of the primary monitor on every show, because
-/// the monitor layout can change between sessions and a caption bar stranded
-/// off-screen is invisible with no way to find it.
-fn show_captions(app: &AppHandle, show: bool) {
-    let Some(window) = app.get_webview_window("captions") else {
-        tracing::warn!("the captions window is missing from this build");
-        return;
-    };
-
-    if !show {
-        window.hide().ok();
-        return;
-    }
-
-    if let Ok(Some(monitor)) = window.primary_monitor() {
-        let screen = monitor.size();
-        let scale = monitor.scale_factor();
-
-        if let Ok(size) = window.outer_size() {
-            // Signed maths first: on a monitor narrower than the caption bar
-            // these would wrap to a huge positive number as u32 and strand the
-            // window off-screen.
-            let x = (i64::from(screen.width) - i64::from(size.width)) / 2;
-            // A margin above the taskbar, scaled so it looks the same on a
-            // high-DPI display.
-            let margin = (72.0 * scale).round() as i64;
-            let y = i64::from(screen.height) - i64::from(size.height) - margin;
-
-            let x = u32::try_from(x.max(0)).unwrap_or(0);
-            let y = u32::try_from(y.max(0)).unwrap_or(0);
-
-            window.set_position(tauri::PhysicalPosition::new(x, y)).ok();
-        }
-    }
-
-    window.show().ok();
-    // Showing must not steal focus from whatever the user is watching.
-    window.set_always_on_top(true).ok();
-
-    // The window is reused across sessions, so re-apply the user's choice
-    // rather than assuming it survived.
-    let click_through = app
-        .state::<crate::commands::AppState>()
-        .settings
-        .get()
-        .captions
-        .click_through;
-    crate::commands::apply_caption_click_through(app, click_through);
-}
-
 fn no_session() -> AudisError {
     AudisError::InvalidArgument {
         field: "session".to_owned(),
@@ -992,8 +882,6 @@ mod tests {
     }
 
     /// `elapsed_ms` is documented as captured audio, excluding paused time. A
-    /// meeting paused for a coffee break must not report the break as recorded
-    /// audio: the number sits next to a transcript people trust.
     #[test]
     fn paused_time_does_not_count_as_captured_audio() {
         let mut session = running(SessionState::Listening);
@@ -1042,7 +930,6 @@ mod tests {
     }
 
     /// Live Caption is local-only. Marking it assistant-enabled would imply
-    /// text leaves the machine when it does not.
     #[test]
     fn a_local_only_mode_does_not_report_the_assistant_as_running() {
         let session = running(SessionState::Listening);

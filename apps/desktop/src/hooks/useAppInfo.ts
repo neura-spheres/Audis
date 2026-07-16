@@ -9,18 +9,11 @@ export type AppInfoState =
   | { status: "ready"; info: AppInfo }
   | { status: "error"; error: UserFacingError };
 
-/**
- * Fetch identity and build information from the Rust core.
- *
- * The backend owns this data. Hardcoding the version here would make the About
- * page quietly start lying after a release.
- */
+/** Fetch identity and build information from the Rust core. */
 export function useAppInfo(): AppInfoState {
   const [state, setState] = useState<AppInfoState>({ status: "loading" });
 
   useEffect(() => {
-    // StrictMode mounts effects twice in development; this stops a response
-    // from a discarded mount overwriting a live one.
     let active = true;
 
     getAppInfo()

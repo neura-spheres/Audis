@@ -1,12 +1,6 @@
 import { NotBuiltYet } from "@/components/NotBuiltYet";
 
-/**
- * Sections whose backend does not exist yet.
- *
- * Each states what it will do and what will live there. They are real routes in
- * the product rather than hidden menu items, so the shape of Audis is legible,
- * but nothing here pretends to work.
- */
+/** Sections whose backend does not exist yet. */
 
 export function SpeakersView() {
   return (
@@ -25,42 +19,6 @@ export function SpeakersView() {
         are always shown as provisional because they can change as more audio arrives.
       </p>
     </NotBuiltYet>
-  );
-}
-
-export function AssistantView() {
-  return (
-    <NotBuiltYet
-      summary="An opt-in assistant that can summarise the conversation, track decisions and action items, and answer questions you ask it."
-      planned={[
-        "Off, manual, question assist, or meeting copilot",
-        "Choose a provider and model",
-        "Response length and style",
-        "Cost mode and a per-session budget",
-        "Cooldown between automatic answers",
-        "How much recent conversation to include",
-      ]}
-    >
-      <p className="px-3 text-footnote" style={{ color: "var(--label-secondary)" }}>
-        When the assistant is off, no transcript text is sent anywhere.
-      </p>
-    </NotBuiltYet>
-  );
-}
-
-export function ShortcutsView() {
-  return (
-    <NotBuiltYet
-      summary="Global shortcuts let you control Audis without leaving the call you are in."
-      planned={[
-        "Start and stop a session",
-        "Pause and resume",
-        "Show or hide captions",
-        "Ask the assistant",
-        "Add a bookmark, decision or action item",
-        "Conflict detection before a shortcut is saved",
-      ]}
-    />
   );
 }
 

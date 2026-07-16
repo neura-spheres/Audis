@@ -40,6 +40,22 @@
         "focus": false,
         "visible": false,
         "dragDropEnabled": false
+      },
+      {
+        "label": "controller",
+        "title": "Audis Controller",
+        "url": "index.html?window=controller",
+        "width": 300,
+        "height": 68,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "resizable": false,
+        "focus": false,
+        "visible": false,
+        "dragDropEnabled": false
       }
     ],
     "security": {

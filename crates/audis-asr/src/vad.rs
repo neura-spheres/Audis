@@ -1,38 +1,22 @@
 //! Voice activity detection and utterance endpointing.
-//!
-//! Whisper is not a streaming engine: it decodes a buffer and returns text. The
-//! way you get live captions out of it is to decide *when* an utterance ended
-//! and decode that. That decision is this module's whole job, and it is what
-//! sets the latency the user actually feels.
-//!
-//! The trade-off is one number, [`EndpointConfig::silence_ms`]. Too short and a
-//! natural pause mid-sentence splits the sentence in two, leaving Whisper to
-//! decode a fragment with no context. Too long and captions lag behind the
-//! speaker. 900 ms sits above a comma pause and below a turn boundary for both
-//! Indonesian and English, and costs 200 ms of latency against 700.
 
 use std::collections::VecDeque;
+
+/// How much of a long sentence an interim caption decodes.
+const INTERIM_WINDOW_MS: u32 = 3_000;
 
 /// Tuning for [`Endpointer`].
 #[derive(Debug, Clone, Copy)]
 pub struct EndpointConfig {
     /// Speech below this RMS is treated as silence.
-    ///
-    /// Not zero: every microphone has a noise floor, so an exact-zero test
-    /// would never fire.
     pub silence_rms: f32,
     /// Silence this long ends the utterance.
     pub silence_ms: u32,
     /// Ignore blips shorter than this, so a cough is not an utterance.
     pub min_speech_ms: u32,
     /// Decode anyway once an utterance runs this long.
-    ///
-    /// Someone who talks without pausing would otherwise never see a caption.
     pub max_utterance_ms: u32,
     /// Audio kept before speech was detected.
-    ///
-    /// VAD always notices slightly late, so without this the first consonant of
-    /// every utterance is clipped and Whisper mishears the first word.
     pub preroll_ms: u32,
 }
 
@@ -40,20 +24,7 @@ impl Default for EndpointConfig {
     fn default() -> Self {
         Self {
             silence_rms: 0.008,
-            // 900 rather than 700. Whisper decodes an utterance in isolation
-            // and pads it to 30 seconds internally, so a fragment is mostly
-            // padding and has almost no context to work with: cutting on a
-            // natural mid-sentence breath produces "Itu." on its own, which the
-            // model then has no way to place. Indonesian speech carries pauses
-            // that a 700 ms gate treats as sentence ends. The cost is 200 ms of
-            // extra latency before a caption appears.
             silence_ms: 900,
-            // Left at 200. Raising it to drop fragments was tempting and wrong:
-            // this floor discards short *speech*, and "Ya", "Itu" and "Oke" are
-            // complete Indonesian utterances well under 350 ms. Losing a real
-            // answer is worse than occasionally decoding a door click, and the
-            // fragments this was meant to fix come from cutting sentences early,
-            // which `silence_ms` is what actually governs.
             min_speech_ms: 200,
             max_utterance_ms: 15_000,
             preroll_ms: 300,
@@ -84,7 +55,6 @@ pub struct Utterance {
     /// Offset from session start where it ends.
     pub end_ms: i64,
     /// True when this was cut by `max_utterance_ms` rather than by silence, so
-    /// the text may end mid-sentence.
     pub truncated: bool,
 }
 
@@ -152,8 +122,6 @@ impl Endpointer {
         if started {
             self.in_speech = true;
             self.speech_samples = 0;
-            // Rewind the start by the pre-roll we are about to prepend, so the
-            // reported timestamp matches the audio actually decoded.
             let preroll_len = self.preroll.len() as u64;
             self.utterance_start_sample = self.total_samples.saturating_sub(preroll_len);
             self.current.extend(self.preroll.drain(..));
@@ -163,7 +131,6 @@ impl Endpointer {
         self.speech_samples = self.speech_samples.saturating_add(block_len);
         self.silence_samples = 0;
 
-        // Cut a long monologue so captions keep appearing.
         let max_samples = ms_to_samples(self.config.max_utterance_ms, self.sample_rate);
         if self.current.len() as u32 >= max_samples {
             return self.finish(true, block_len);
@@ -182,8 +149,6 @@ impl Endpointer {
             return EndpointEvent::Idle;
         }
 
-        // Keep the trailing silence: Whisper uses it to know the utterance
-        // ended, and trimming it makes the last word less reliable.
         self.current.extend_from_slice(samples);
         self.silence_samples = self.silence_samples.saturating_add(block_len);
 
@@ -210,7 +175,6 @@ impl Endpointer {
         self.preroll.clear();
 
         if !long_enough {
-            // A cough or a door. Drop it rather than sending it to a model.
             return EndpointEvent::Idle;
         }
 
@@ -235,19 +199,6 @@ impl Endpointer {
     }
 
     /// The utterance being spoken right now, without ending it.
-    ///
-    /// Endpointing is what makes Whisper usable live, and it is also what makes
-    /// it feel slow: nothing can be shown until the silence gate closes, so
-    /// every caption lands a beat after the speaker stopped. This hands out the
-    /// audio so far so an interim caption can be decoded while the sentence is
-    /// still being said. The utterance is left intact and will be emitted
-    /// properly by [`Endpointer::push`] when it really ends.
-    ///
-    /// `truncated` is always true: this is by definition a sentence that has not
-    /// finished, so whatever is decoded from it may end mid-thought.
-    ///
-    /// Returns `None` when nobody is speaking, or when too little has been said
-    /// to decode anything but noise.
     pub fn snapshot(&self) -> Option<Utterance> {
         if !self.in_speech {
             return None;
@@ -258,21 +209,22 @@ impl Endpointer {
             return None;
         }
 
+        let window = ms_to_samples(INTERIM_WINDOW_MS, self.sample_rate) as usize;
+        let start = self.current.len().saturating_sub(window);
+        let samples = self.current[start..].to_vec();
+
+        let dropped = self.current.len() - samples.len();
+        let window_start_sample = self.utterance_start_sample + dropped as u64;
+
         Some(Utterance {
-            // A copy, because the real utterance keeps growing. This runs on the
-            // prepare thread rather than the audio callback, and only a couple
-            // of times a second, so the allocation is affordable.
-            samples: self.current.clone(),
-            start_ms: samples_to_ms(self.utterance_start_sample, self.sample_rate),
+            samples,
+            start_ms: samples_to_ms(window_start_sample, self.sample_rate),
             end_ms: samples_to_ms(self.total_samples, self.sample_rate),
             truncated: true,
         })
     }
 
     /// Emit whatever is buffered, for when a session stops mid-sentence.
-    ///
-    /// A user who stops talking and clicks Stop must not lose their last
-    /// sentence just because the silence timer had not elapsed.
     pub fn flush(&mut self) -> Option<Utterance> {
         if !self.in_speech || self.current.is_empty() {
             return None;
@@ -310,13 +262,6 @@ mod tests {
     use super::*;
 
     /// Fixed thresholds for the tests below.
-    ///
-    /// Explicit rather than `EndpointConfig::default()`: these exercise the
-    /// endpointer's logic, and the defaults are a product tuning decision that
-    /// changes as recognition quality is tuned. Pinning them together meant a
-    /// deliberate tuning change broke four tests that had no opinion about it.
-    /// The defaults themselves are asserted once, in
-    /// `defaults_are_tuned_for_whole_sentences`.
     fn test_config() -> EndpointConfig {
         EndpointConfig {
             silence_rms: 0.008,
@@ -328,7 +273,6 @@ mod tests {
     }
 
     /// Interim captions are decoded from this, so it must hand out the sentence
-    /// so far without disturbing the real one.
     #[test]
     fn a_snapshot_shows_the_sentence_so_far_without_ending_it() {
         let mut endpointer = Endpointer::new(test_config());
@@ -343,8 +287,6 @@ mod tests {
         assert!(!first.samples.is_empty());
         assert!(first.truncated, "an unfinished sentence must say so");
 
-        // Taking a snapshot must not consume the audio: the utterance keeps
-        // growing and is still emitted in full when it really ends.
         endpointer.push(&speech(400));
         let second = endpointer.snapshot().expect("still in progress");
         assert!(
@@ -381,14 +323,10 @@ mod tests {
     fn defaults_are_tuned_for_whole_sentences() {
         let config = EndpointConfig::default();
 
-        // Whisper decodes an utterance alone and pads it to 30 seconds, so a
-        // fragment has almost no context. A gate this long rides out the pauses
-        // inside a sentence instead of ending it.
         assert!(
             config.silence_ms >= 900,
             "a shorter gate cuts sentences mid-thought and produces fragments"
         );
-        // Short words are real words. See the comment on the default.
         assert!(
             config.min_speech_ms <= 250,
             "a higher floor discards short but complete answers"
@@ -428,7 +366,6 @@ mod tests {
         assert_eq!(endpointer.push(&speech(100)), EndpointEvent::SpeechStarted);
         assert_eq!(endpointer.push(&speech(400)), EndpointEvent::Speaking);
 
-        // Not yet: below the 700 ms threshold.
         assert_eq!(endpointer.push(&silence(400)), EndpointEvent::Speaking);
 
         let event = endpointer.push(&silence(400));
@@ -448,7 +385,6 @@ mod tests {
         let mut endpointer = Endpointer::new(test_config());
 
         endpointer.push(&speech(300));
-        // 300 ms is a breath, not a turn boundary.
         assert_eq!(endpointer.push(&silence(300)), EndpointEvent::Speaking);
         assert_eq!(endpointer.push(&speech(300)), EndpointEvent::Speaking);
         assert!(endpointer.in_speech(), "the utterance should still be open");
@@ -490,7 +426,6 @@ mod tests {
     fn preroll_is_prepended_so_the_first_word_survives() {
         let mut endpointer = Endpointer::new(test_config());
 
-        // Fill the pre-roll with quiet, non-zero room tone below the threshold.
         endpointer.push(&block(500, 0.001));
         endpointer.push(&speech(300));
         let event = endpointer.push(&silence(800));
@@ -554,7 +489,6 @@ mod tests {
     #[test]
     fn a_quiet_room_tone_still_counts_as_silence() {
         let mut endpointer = Endpointer::new(EndpointConfig::default());
-        // 0.001 RMS is well under the 0.008 threshold.
         for _ in 0..10 {
             assert_eq!(endpointer.push(&block(100, 0.001)), EndpointEvent::Idle);
         }

@@ -1,14 +1,4 @@
 //! Session transcript persistence.
-//!
-//! Transcripts are written as JSON Lines, appended one segment at a time and
-//! flushed as they arrive. A meeting can run for an hour, and the failure that
-//! matters is losing all of it: with an append-only file, a crash or a power
-//! cut costs at most the sentence in flight. A single JSON document would have
-//! to be rewritten whole and would be empty until the session ended.
-//!
-//! Which modes save is decided by [`audis_common::FeatureId::persists_transcript`],
-//! not here. Live Caption promises that nothing is written to disk, and this
-//! module is never constructed for it.
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -55,7 +45,6 @@ pub enum TranscriptLine {
     /// One recognised segment.
     Segment(Box<TranscriptSegment>),
     /// Session summary. Absent if Audis was killed mid-session, which is how a
-    /// reader can tell a transcript is truncated rather than complete.
     Footer(SessionFooter),
 }
 
@@ -120,11 +109,6 @@ impl SessionWriter {
     }
 
     /// Close the transcript, recording how it ended.
-    ///
-    /// The elapsed time is taken from the audio actually transcribed rather
-    /// than passed in: this runs on the recognise thread, which has no view of
-    /// the session clock, and a number invented here would be worse than one
-    /// derived from the transcript itself.
     pub fn finish(mut self) -> Result<PathBuf> {
         self.write_line(&TranscriptLine::Footer(SessionFooter {
             elapsed_ms: u64::try_from(self.last_end_ms).unwrap_or(0),
@@ -158,9 +142,6 @@ impl SessionWriter {
             source,
         })?;
 
-        // Flushed per segment so a crash loses at most the sentence in flight
-        // rather than everything since the last buffer boundary. Segments are
-        // seconds apart, so this costs nothing measurable.
         self.file.flush().map_err(|source| AudisError::Io {
             path: self.path.clone(),
             detail: "could not save the transcript".to_owned(),
@@ -171,6 +152,187 @@ impl SessionWriter {
 
 fn now() -> String {
     chrono::Utc::now().to_rfc3339()
+}
+
+/// A saved session, as the library lists it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSummary {
+    /// Session id.
+    pub id: Uuid,
+    /// Which feature produced it.
+    pub mode: SessionMode,
+    /// The language recognised.
+    pub language: Language,
+    /// When it started, RFC 3339.
+    pub started_at: String,
+    /// When it ended, or `None` if it was cut off before finishing.
+    pub ended_at: Option<String>,
+    /// How many segments it holds.
+    pub segment_count: usize,
+    /// Captured milliseconds.
+    pub elapsed_ms: u64,
+    /// Whether the file has a footer, i.e. the session ended cleanly.
+    pub complete: bool,
+}
+
+/// The format an exported transcript is written in.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ExportFormat {
+    /// Plain text.
+    Text,
+    /// Markdown, with speakers in bold.
+    Markdown,
+    /// SubRip subtitles, timed from each segment.
+    Srt,
+}
+
+/// Every saved session, newest first.
+pub fn list_summaries(paths: &AppPaths) -> Vec<SessionSummary> {
+    let mut sessions = Vec::new();
+    let Ok(entries) = std::fs::read_dir(paths.sessions_dir()) else {
+        return sessions;
+    };
+
+    for entry in entries.flatten() {
+        let file = entry.path().join("transcript.jsonl");
+        if let Some(summary) = read_summary(&file) {
+            sessions.push(summary);
+        }
+    }
+
+    sessions.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    sessions
+}
+
+fn read_summary(path: &std::path::Path) -> Option<SessionSummary> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut header = None;
+    let mut footer = None;
+    let mut count = 0;
+
+    for line in content.lines() {
+        match serde_json::from_str::<TranscriptLine>(line) {
+            Ok(TranscriptLine::Header(value)) => header = Some(value),
+            Ok(TranscriptLine::Segment(_)) => count += 1,
+            Ok(TranscriptLine::Footer(value)) => footer = Some(value),
+            Err(_) => {}
+        }
+    }
+
+    let header = header?;
+    Some(SessionSummary {
+        id: header.id,
+        mode: header.mode,
+        language: header.language,
+        started_at: header.started_at,
+        ended_at: footer.as_ref().map(|f| f.ended_at.clone()),
+        segment_count: footer.as_ref().map_or(count, |f| f.segment_count),
+        elapsed_ms: footer.as_ref().map_or(0, |f| f.elapsed_ms),
+        complete: footer.is_some(),
+    })
+}
+
+/// Every segment of one saved session.
+pub fn read_segments(paths: &AppPaths, id: Uuid) -> Result<Vec<TranscriptSegment>> {
+    let path = paths.session_dir(id).join("transcript.jsonl");
+    let content = std::fs::read_to_string(&path).map_err(|source| AudisError::Io {
+        path,
+        detail: "could not read the transcript".to_owned(),
+        source,
+    })?;
+
+    let mut segments = Vec::new();
+    for line in content.lines() {
+        if let Ok(TranscriptLine::Segment(segment)) = serde_json::from_str(line) {
+            segments.push(*segment);
+        }
+    }
+    Ok(segments)
+}
+
+/// Delete a saved session and everything in its folder.
+pub fn delete(paths: &AppPaths, id: Uuid) -> Result<()> {
+    let dir = paths.session_dir(id);
+    std::fs::remove_dir_all(&dir).map_err(|source| AudisError::Io {
+        path: dir,
+        detail: "could not delete the session".to_owned(),
+        source,
+    })
+}
+
+/// Write a session's transcript to the exports folder and return its path.
+pub fn export(paths: &AppPaths, id: Uuid, format: ExportFormat) -> Result<std::path::PathBuf> {
+    let segments = read_segments(paths, id)?;
+    let body = render(&segments, format);
+
+    let dir = paths.exports_dir();
+    std::fs::create_dir_all(&dir).map_err(|source| AudisError::Io {
+        path: dir.clone(),
+        detail: "could not create the exports folder".to_owned(),
+        source,
+    })?;
+
+    let extension = match format {
+        ExportFormat::Text => "txt",
+        ExportFormat::Markdown => "md",
+        ExportFormat::Srt => "srt",
+    };
+    let path = dir.join(format!("session-{id}.{extension}"));
+    std::fs::write(&path, body).map_err(|source| AudisError::Io {
+        path: path.clone(),
+        detail: "could not write the export".to_owned(),
+        source,
+    })?;
+    Ok(path)
+}
+
+fn render(segments: &[TranscriptSegment], format: ExportFormat) -> String {
+    let speaker = |segment: &TranscriptSegment| {
+        segment
+            .speaker
+            .clone()
+            .unwrap_or_else(|| segment.source.default_label().to_owned())
+    };
+
+    match format {
+        ExportFormat::Text => segments
+            .iter()
+            .map(|segment| format!("{}: {}", speaker(segment), segment.text))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        ExportFormat::Markdown => {
+            let mut out = String::from("# Transcript\n\n");
+            for segment in segments {
+                out.push_str(&format!("**{}** {}\n\n", speaker(segment), segment.text));
+            }
+            out
+        }
+        ExportFormat::Srt => {
+            let mut out = String::new();
+            for (index, segment) in segments.iter().enumerate() {
+                out.push_str(&format!(
+                    "{}\n{} --> {}\n{}: {}\n\n",
+                    index + 1,
+                    srt_time(segment.start_ms),
+                    srt_time(segment.end_ms),
+                    speaker(segment),
+                    segment.text
+                ));
+            }
+            out
+        }
+    }
+}
+
+fn srt_time(ms: i64) -> String {
+    let ms = ms.max(0);
+    let hours = ms / 3_600_000;
+    let minutes = (ms % 3_600_000) / 60_000;
+    let seconds = (ms % 60_000) / 1_000;
+    let millis = ms % 1_000;
+    format!("{hours:02}:{minutes:02}:{seconds:02},{millis:03}")
 }
 
 #[cfg(test)]
@@ -230,7 +392,6 @@ mod tests {
     }
 
     /// The reason for JSON Lines. A session killed mid-meeting must still yield
-    /// every sentence written before the crash.
     #[test]
     fn segments_survive_a_session_that_never_finishes() {
         let (_dir, paths) = paths();
@@ -243,14 +404,12 @@ mod tests {
             .append(&segment(id, "before the crash"))
             .expect("append");
 
-        // Dropped without finish(), which is what a power cut looks like.
         let path = paths.session_dir(id).join("transcript.jsonl");
         drop(writer);
 
         let contents = std::fs::read_to_string(&path).expect("read");
         assert!(contents.contains("before the crash"));
 
-        // No footer: a reader can tell this transcript is truncated.
         assert!(!contents.contains("\"footer\""));
     }
 

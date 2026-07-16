@@ -1,10 +1,4 @@
-/**
- * The Audis mark.
- *
- * Loaded from `public/logo.png` via `BASE_URL` rather than a hardcoded `/`
- * path, so the reference resolves correctly under Vite's relative `base`
- * (`vite.config.ts`) both in the dev server and inside the packaged Tauri app.
- */
+/** The Audis mark. */
 export function Wordmark({ size = 32 }: { size?: number }) {
   return (
     <img
