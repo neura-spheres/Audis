@@ -2,6 +2,12 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "overlays",
   "description": "The caption overlay and the controller chip. Both are transparent, always-on-top windows that float over the user's other apps during a session. They listen for transcript, session and settings events, read settings, and can be dragged by the user. Capabilities are per-window, so without this the overlays could not receive an event or be moved. They get nothing else: no filesystem, no opener, no OS info.",
-  "windows": ["captions", "controller"],
-  "permissions": ["core:event:default", "core:window:allow-start-dragging"]
+  "windows": ["captions", "controller", "assistant"],
+  "permissions": [
+    "core:event:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-size"
+  ]
 }

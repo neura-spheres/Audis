@@ -54,7 +54,7 @@ export function CaptionsView() {
               { id: "Large", label: "Large" },
               { id: "Huge", label: "Huge" },
             ]}
-            onChange={(name) => set({ fontSize: SIZES[name] ?? 28 })}
+            onChange={(name) => set({ fontSize: SIZES[name] ?? 22 })}
           />
         </Row>
 
@@ -85,7 +85,7 @@ export function CaptionsView() {
 
         <Row
           label="Click through captions"
-          help="Clicks pass to whatever is behind, so captions never get in the way of your call."
+          help="Clicks pass to whatever is behind. Leave this off to drag the captions by grabbing them, or right-click them for more options."
         >
           <Switch
             label="Click through captions"
@@ -116,10 +116,12 @@ function CaptionPreview({ captions }: { captions: CaptionSettings }) {
       <div
         className="flex w-full flex-col gap-2"
         style={{
-          padding: hasPanel ? "14px 18px" : "4px 8px",
+          padding: hasPanel ? "10px 16px" : "4px 8px",
           borderRadius: 16,
           background: hasPanel ? `rgba(14, 15, 17, ${opacity})` : "transparent",
-          backdropFilter: hasPanel ? "blur(20px) saturate(140%)" : undefined,
+          backdropFilter: hasPanel
+            ? `blur(${Math.round(opacity * 22)}px) saturate(140%)`
+            : undefined,
           border: hasPanel ? `1px solid rgba(255,255,255,${0.1 * opacity})` : undefined,
         }}
       >
@@ -165,7 +167,7 @@ function CaptionPreview({ captions }: { captions: CaptionSettings }) {
   );
 }
 
-const SIZES: Record<string, number> = { Small: 22, Medium: 28, Large: 36, Huge: 46 };
+const SIZES: Record<string, number> = { Small: 16, Medium: 22, Large: 30, Huge: 42 };
 
 /** The nearest named size, so a saved value always selects something. */
 function sizeName(fontSize: number): string {

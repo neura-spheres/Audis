@@ -22,18 +22,65 @@ const UTTERANCE_QUEUE_DEPTH: usize = 32;
 /// How often an in-progress sentence is offered for an interim caption.
 const PARTIAL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(400);
 
-/// Least time between interim requests to a cloud provider.
-///
-/// Interim previews are billed round-trips against a rate limit, so a cloud
-/// engine only sends one at most this often. A stale preview is dropped rather
-/// than sent, and a rate-limited one is skipped, so finals never suffer.
-const CLOUD_INTERIM_MIN: std::time::Duration = std::time::Duration::from_millis(3000);
-
 /// The silence gate a cloud engine ends an utterance on.
 ///
 /// Shorter than the local gate: a large hosted model does not need the extra
 /// context a local model does, so finals can be cut sooner and appear sooner.
 const CLOUD_SILENCE_MS: u32 = 500;
+
+/// How long a cloud engine lets one utterance run before cutting it anyway.
+///
+/// A cloud engine has no streaming API here: every request re-sends the whole
+/// utterance as audio. Re-decoding a growing utterance for previews therefore
+/// costs more and takes longer the longer someone talks. Cutting run-on speech
+/// into short pieces instead means each piece is sent exactly once, small and
+/// fast, so captions keep up without a preview and without the repeat traffic.
+const CLOUD_MAX_UTTERANCE_MS: u32 = 4_000;
+
+/// How long before the same recognition problem is worth mentioning again.
+const PROBLEM_REPEAT_AFTER: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Tells the user when recognition is failing, without repeating itself.
+///
+/// A cloud engine that is out of credit, rate limited, or holding a rejected key
+/// fails on every chunk, which is several times a minute. Saying so once is
+/// help; saying so every four seconds is a second fault on top of the first.
+#[derive(Default)]
+struct ProblemReporter {
+    /// The last thing said, and when, so it is not said again immediately.
+    last: Option<(String, std::time::Instant)>,
+}
+
+impl ProblemReporter {
+    /// Report a failure, unless the same one was just reported.
+    fn report(&mut self, app: &AppHandle, error: &audis_asr::AsrError) {
+        let facing = error.to_user_facing();
+        let message = format!("{} {}", facing.explanation, facing.suggested_action);
+
+        let worth_saying = match &self.last {
+            Some((said, at)) => *said != message || at.elapsed() >= PROBLEM_REPEAT_AFTER,
+            None => true,
+        };
+        if !worth_saying {
+            return;
+        }
+
+        self.last = Some((message.clone(), std::time::Instant::now()));
+        app.emit(
+            events::DIAGNOSTIC_WARNING,
+            DiagnosticWarning {
+                kind: "asr.failing".to_owned(),
+                message,
+            },
+        )
+        .ok();
+    }
+
+    /// Recognition worked, so whatever was wrong is over.
+    fn clear(&mut self) {
+        self.last = None;
+    }
+}
 
 /// What to start, gathered from settings by the caller.
 pub struct SessionRequest {
@@ -53,6 +100,8 @@ pub struct SessionRequest {
     pub want_microphone: bool,
     /// Capture what the computer is playing.
     pub want_computer_audio: bool,
+    /// Show the assistant panel, because the assistant is on.
+    pub assistant_enabled: bool,
 }
 
 /// One utterance, tagged with where it came from.
@@ -103,6 +152,7 @@ impl SessionController {
             computer_audio_id,
             want_microphone,
             want_computer_audio,
+            assistant_enabled,
         } = request;
 
         let mut guard = self.lock();
@@ -152,11 +202,16 @@ impl SessionController {
         let mut captures = Vec::new();
         let mut workers = Vec::new();
 
-        let endpoint_config = if engine.capabilities().offline {
+        // A local engine decodes for free, so it can afford live previews of the
+        // sentence in progress. A cloud engine bills every round-trip and has no
+        // streaming API, so it gets short chunks and no previews instead.
+        let offline = engine.capabilities().offline;
+        let endpoint_config = if offline {
             EndpointConfig::default()
         } else {
             EndpointConfig {
                 silence_ms: CLOUD_SILENCE_MS,
+                max_utterance_ms: CLOUD_MAX_UTTERANCE_MS,
                 ..EndpointConfig::default()
             }
         };
@@ -190,6 +245,7 @@ impl SessionController {
                 Arc::clone(&stop),
                 Arc::clone(&paused),
                 endpoint_config,
+                offline,
             ) {
                 Ok((capture, worker)) => {
                     captures.push(capture);
@@ -213,6 +269,7 @@ impl SessionController {
                 Arc::clone(&stop),
                 Arc::clone(&paused),
                 endpoint_config,
+                offline,
             ) {
                 Ok((capture, worker)) => {
                     captures.push(capture);
@@ -279,6 +336,10 @@ impl SessionController {
 
         crate::overlays::show(app, crate::overlays::Overlay::Captions);
         crate::overlays::show(app, crate::overlays::Overlay::Controller);
+        if assistant_enabled {
+            // The panel shows itself once it has an answer; just put it in place.
+            crate::overlays::place(app, crate::overlays::Overlay::Assistant);
+        }
 
         app.emit(events::SESSION_STATE, &status).ok();
         tracing::info!(%id, ?mode, "session started");
@@ -428,6 +489,7 @@ fn start_source(
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     endpoint_config: EndpointConfig,
+    want_partials: bool,
 ) -> std::result::Result<(audis_audio::CaptureHandle, JoinHandle<()>), audis_audio::AudioError> {
     let (frame_tx, frame_rx) = sync_channel::<Vec<f32>>(FRAME_QUEUE_DEPTH);
     let dropped = Arc::new(AtomicU64::new(0));
@@ -458,6 +520,7 @@ fn start_source(
         paused,
         dropped,
         endpoint_config,
+        want_partials,
     )
     .map_err(|error| audis_audio::AudioError::StreamStart {
         device: capture.device_name().to_owned(),
@@ -481,6 +544,7 @@ fn spawn_prepare(
     paused: Arc<AtomicBool>,
     dropped: Arc<AtomicU64>,
     endpoint_config: EndpointConfig,
+    want_partials: bool,
 ) -> std::io::Result<JoinHandle<()>> {
     std::thread::Builder::new()
         .name(format!("audis-prepare-{source:?}"))
@@ -507,10 +571,12 @@ fn spawn_prepare(
 
                 let event = endpointer.push(&ready);
 
-                if matches!(
-                    event,
-                    EndpointEvent::SpeechStarted | EndpointEvent::Speaking
-                ) && last_partial.elapsed() >= PARTIAL_INTERVAL
+                if want_partials
+                    && matches!(
+                        event,
+                        EndpointEvent::SpeechStarted | EndpointEvent::Speaking
+                    )
+                    && last_partial.elapsed() >= PARTIAL_INTERVAL
                     && let Some(in_progress) = endpointer.snapshot()
                 {
                     last_partial = std::time::Instant::now();
@@ -586,13 +652,7 @@ fn spawn_recogniser(setup: RecogniserSetup) -> std::io::Result<JoinHandle<()>> {
         .name("audis-recognise".to_owned())
         .spawn(move || {
             let engine_id = engine.id().to_owned();
-
-            let interim_min = if engine.capabilities().offline {
-                std::time::Duration::ZERO
-            } else {
-                CLOUD_INTERIM_MIN
-            };
-            let mut last_interim: Option<std::time::Instant> = None;
+            let mut problems = ProblemReporter::default();
 
             for source in [AudioSourceKind::Microphone, AudioSourceKind::ComputerAudio] {
                 emit_asr_status(&app, source, AsrState::Listening, &engine_id, None);
@@ -614,6 +674,7 @@ fn spawn_recogniser(setup: RecogniserSetup) -> std::io::Result<JoinHandle<()>> {
                             source,
                             &utterance,
                             writer.as_mut(),
+                            &mut problems,
                         );
                         continue;
                     }
@@ -621,21 +682,20 @@ fn spawn_recogniser(setup: RecogniserSetup) -> std::io::Result<JoinHandle<()>> {
                     Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 }
 
-                let ready_for_interim = last_interim.is_none_or(|at| at.elapsed() >= interim_min);
-                if ready_for_interim {
-                    let waiting = partial.lock().ok().and_then(|mut slot| slot.take());
-                    if let Some(SourcedUtterance { source, utterance }) = waiting {
-                        decode_partial(
-                            &app,
-                            engine.as_mut(),
-                            session_id,
-                            language,
-                            source,
-                            &utterance,
-                        );
-                        last_interim = Some(std::time::Instant::now());
-                        continue;
-                    }
+                // Only a local engine offers previews, and the prepare thread
+                // already paces them; a cloud engine leaves this slot empty, so
+                // this never fires for one.
+                let waiting = partial.lock().ok().and_then(|mut slot| slot.take());
+                if let Some(SourcedUtterance { source, utterance }) = waiting {
+                    decode_partial(
+                        &app,
+                        engine.as_mut(),
+                        session_id,
+                        language,
+                        source,
+                        &utterance,
+                    );
+                    continue;
                 }
 
                 match utterances.recv_timeout(std::time::Duration::from_millis(40)) {
@@ -648,6 +708,7 @@ fn spawn_recogniser(setup: RecogniserSetup) -> std::io::Result<JoinHandle<()>> {
                         source,
                         &utterance,
                         writer.as_mut(),
+                        &mut problems,
                     ),
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -681,6 +742,7 @@ fn decode_final(
     source: AudioSourceKind,
     utterance: &audis_asr::Utterance,
     writer: Option<&mut crate::transcript_store::SessionWriter>,
+    problems: &mut ProblemReporter,
 ) {
     emit_asr_status(app, source, AsrState::Recognising, engine_id, None);
 
@@ -688,6 +750,8 @@ fn decode_final(
         Ok(result) => result,
         Err(error) => {
             tracing::warn!(%error, ?source, "an utterance could not be recognised");
+            // The log is for us; this is what the user actually gets told.
+            problems.report(app, &error);
             emit_asr_status(
                 app,
                 source,
@@ -698,6 +762,8 @@ fn decode_final(
             return;
         }
     };
+
+    problems.clear();
 
     let segment = TranscriptSegment {
         id: Uuid::new_v4(),

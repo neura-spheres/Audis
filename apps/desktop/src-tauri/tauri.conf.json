@@ -30,7 +30,7 @@
         "title": "Audis Captions",
         "url": "index.html?window=captions",
         "width": 900,
-        "height": 180,
+        "height": 260,
         "transparent": true,
         "decorations": false,
         "alwaysOnTop": true,
@@ -53,6 +53,22 @@
         "skipTaskbar": true,
         "shadow": false,
         "resizable": false,
+        "focus": false,
+        "visible": false,
+        "dragDropEnabled": false
+      },
+      {
+        "label": "assistant",
+        "title": "Audis Assistant",
+        "url": "index.html?window=assistant",
+        "width": 380,
+        "height": 300,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "resizable": true,
         "focus": false,
         "visible": false,
         "dragDropEnabled": false
@@ -81,7 +97,7 @@
     "active": true,
     "targets": ["nsis", "msi"],
     "publisher": "Neura Audis",
-    "copyright": "© 2026 Neura Audis",
+    "copyright": "\u00a9 2026 Neura Audis",
     "category": "Productivity",
     "shortDescription": "Hear more. Understand faster.",
     "longDescription": "Audis captures your microphone and your computer's audio as separate sources, transcribes them live, and helps you understand the conversation.",
@@ -95,6 +111,16 @@
         "installMode": "currentUser",
         "languages": ["English"],
         "displayLanguageSelector": false
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk1QkJDNjAxQkY4OThEMTEKUldRUmpZbS9BY2E3bGFZbDJYSjdVVlVMWWg0ajFHU2hKVXgzeVc3VFZkekFXRXZGK0krajhsSEYK",
+      "endpoints": ["https://github.com/neura-spheres/Audis/releases/latest/download/latest.json"],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

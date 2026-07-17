@@ -12,6 +12,7 @@ mod settings_store;
 mod shortcuts;
 mod transcript_store;
 mod tray;
+mod updates;
 
 use audis_common::AppPaths;
 use tauri::{Manager, WindowEvent};
@@ -102,6 +103,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState { paths, settings })
         .manage(audio_test::AudioTestState::default())
         .manage(std::sync::Arc::new(model_store::ModelStore::default()))
@@ -114,6 +116,9 @@ pub fn run() {
             commands::open_data_file,
             commands::reveal_data_file,
             commands::get_diagnostics,
+            commands::check_for_updates,
+            commands::install_update,
+            commands::open_release_page,
             commands::list_audio_devices,
             commands::start_audio_test,
             commands::stop_audio_test,
@@ -133,6 +138,10 @@ pub fn run() {
             commands::get_session_status,
             commands::list_provider_models,
             commands::ask_assistant,
+            commands::assistant_summarize,
+            commands::set_assistant_enabled,
+            commands::reset_caption_position,
+            commands::set_caption_click_through,
             commands::list_sessions,
             commands::get_session_transcript,
             commands::delete_session,

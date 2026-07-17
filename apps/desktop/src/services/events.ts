@@ -14,6 +14,7 @@ export const AUDIS_EVENTS = {
   assistantResponse: "audis://assistant/response",
   meetingUpdate: "audis://meeting/update",
   updateStatus: "audis://update/status",
+  updateProgress: "audis://update/progress",
   diagnosticWarning: "audis://diagnostic/warning",
   modelProgress: "audis://model/progress",
   settingsChanged: "audis://settings/changed",

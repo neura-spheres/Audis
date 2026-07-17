@@ -2,12 +2,22 @@ import { useEffect, useState } from "react";
 
 import { useOverlayMenu, type OverlayMenuItem } from "@/components/OverlayMenu";
 import { useSession } from "@/hooks/useSession";
-import { hideOverlay, openMainWindow } from "@/services/ipc";
+import { AUDIS_EVENTS, subscribe } from "@/services/events";
+import {
+  getSettings,
+  hideOverlay,
+  openMainWindow,
+  setAssistantEnabled,
+  setCaptionClickThrough,
+} from "@/services/ipc";
+import { settingsSchema } from "@/schemas/ipc";
 
 /** The controller chip. */
 export function ControllerWindow() {
   const { session, stop, setPaused } = useSession();
   const paused = session?.state === "paused";
+  const assistantOn = useAssistantToggle();
+  const captionsClickThrough = useCaptionClickThrough();
 
   const menuItems: OverlayMenuItem[] = [
     {
@@ -16,15 +26,27 @@ export function ControllerWindow() {
       onSelect: () => void setPaused(!paused),
     },
     {
+      id: "assistant",
+      label: assistantOn.enabled ? "Turn off AI assistant" : "Turn on AI assistant",
+      onSelect: () => assistantOn.toggle(),
+    },
+    {
       id: "open",
       label: "Open Audis",
       onSelect: () => void openMainWindow(),
     },
     {
+      id: "captions-click-through",
+      label: captionsClickThrough.enabled
+        ? "Make captions clickable"
+        : "Let clicks pass through captions",
+      separatorBefore: true,
+      onSelect: () => captionsClickThrough.toggle(),
+    },
+    {
       id: "hide-captions",
       label: "Hide captions",
       onSelect: () => void hideOverlay("captions"),
-      separatorBefore: true,
     },
     {
       id: "hide-controller",
@@ -65,6 +87,7 @@ export function ControllerWindow() {
 
         <div className="mx-0.5 h-5 w-px" style={{ background: "rgba(255,255,255,0.14)" }} />
 
+        <AssistantButton enabled={assistantOn.enabled} onClick={assistantOn.toggle} />
         <ChipButton label={paused ? "Resume" : "Pause"} onClick={() => void setPaused(!paused)}>
           {paused ? <PlayGlyph /> : <PauseGlyph />}
         </ChipButton>
@@ -75,6 +98,75 @@ export function ControllerWindow() {
 
       {menu}
     </div>
+  );
+}
+
+/** Reads the assistant toggle and keeps it in sync with the rest of the app. */
+function useAssistantToggle() {
+  const [enabled, setEnabled] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    getSettings()
+      .then((s) => active && setEnabled(s.assistant.enabled))
+      .catch(() => undefined);
+
+    return subscribe(AUDIS_EVENTS.settingsChanged, (payload) => {
+      const parsed = settingsSchema.safeParse(payload);
+      if (parsed.success) setEnabled(parsed.data.assistant.enabled);
+    });
+  }, []);
+
+  const toggle = () => {
+    const next = !enabled;
+    setEnabled(next);
+    setAssistantEnabled(next).catch(() => setEnabled(!next));
+  };
+
+  return { enabled, toggle };
+}
+
+/** Reads and controls caption click-through, so it can be recovered from here. */
+function useCaptionClickThrough() {
+  const [enabled, setEnabled] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    getSettings()
+      .then((s) => active && setEnabled(s.captions.clickThrough))
+      .catch(() => undefined);
+
+    return subscribe(AUDIS_EVENTS.settingsChanged, (payload) => {
+      const parsed = settingsSchema.safeParse(payload);
+      if (parsed.success) setEnabled(parsed.data.captions.clickThrough);
+    });
+  }, []);
+
+  const toggle = () => {
+    const next = !enabled;
+    setEnabled(next);
+    setCaptionClickThrough(next).catch(() => setEnabled(!next));
+  };
+
+  return { enabled, toggle };
+}
+
+function AssistantButton({ enabled, onClick }: { enabled: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={enabled ? "Turn off AI assistant" : "Turn on AI assistant"}
+      aria-pressed={enabled}
+      title={enabled ? "AI assistant on" : "AI assistant off"}
+      onClick={onClick}
+      className="audis-chip-button flex h-7 w-7 items-center justify-center rounded-full"
+      style={{
+        color: enabled ? "#8ab4ff" : "rgba(255,255,255,0.55)",
+        background: enabled ? "rgba(120,170,255,0.16)" : "transparent",
+      }}
+    >
+      <SparkGlyph />
+    </button>
   );
 }
 
@@ -178,6 +270,15 @@ function StopGlyph() {
   return (
     <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
       <rect x="3.5" y="3.5" width="9" height="9" rx="2" />
+    </svg>
+  );
+}
+
+function SparkGlyph() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+      <path d="M8 1.6l1.35 3.55L12.9 6.5 9.35 7.85 8 11.4 6.65 7.85 3.1 6.5l3.55-1.35L8 1.6z" />
+      <circle cx="12.7" cy="12.2" r="1.3" />
     </svg>
   );
 }

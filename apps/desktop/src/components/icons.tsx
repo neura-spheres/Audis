@@ -128,15 +128,6 @@ export function BellIcon() {
   );
 }
 
-export function UpdateIcon() {
-  return (
-    <svg {...base} aria-hidden>
-      <path d="M13 8a5 5 0 1 1-1.6-3.65" />
-      <path d="M13.25 2.5V5.5h-3" />
-    </svg>
-  );
-}
-
 export function LockIcon() {
   return (
     <svg {...base} aria-hidden>

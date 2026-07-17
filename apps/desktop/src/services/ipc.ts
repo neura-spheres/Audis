@@ -12,6 +12,7 @@ import {
   providerStatusSchema,
   sessionStatusSchema,
   sessionSummarySchema,
+  updateCheckSchema,
   transcriptSegmentSchema,
   settingsSchema,
   userFacingErrorSchema,
@@ -29,6 +30,7 @@ import {
   type ExportFormat,
   type SessionStatus,
   type SessionSummary,
+  type UpdateCheck,
   type TranscriptSegment,
   type Settings,
   type UserFacingError,
@@ -125,6 +127,21 @@ export function getDiagnostics(): Promise<Diagnostics> {
   return callCommand("get_diagnostics", diagnosticsSchema);
 }
 
+/** Look for a newer Audis on the user's chosen release channel. */
+export function checkForUpdates(): Promise<UpdateCheck> {
+  return callCommand("check_for_updates", updateCheckSchema);
+}
+
+/** Download, verify and install the newest release, then restart into it. */
+export function installUpdate(): Promise<void> {
+  return callCommand("install_update", voidResult);
+}
+
+/** Open a release page in the browser. Refused unless it is an Audis release. */
+export function openReleasePage(url: string): Promise<void> {
+  return callCommand("open_release_page", voidResult, { url });
+}
+
 /** Every microphone and output endpoint on this machine. */
 export function listAudioDevices(): Promise<AudioDevices> {
   return callCommand("list_audio_devices", audioDevicesSchema);
@@ -197,8 +214,22 @@ export function listProviderModels(id: ProviderId, purpose: "speech" | "chat"): 
 }
 
 /** Ask the assistant to answer a question. Empty means "not a real question". */
-export function askAssistant(question: string, transcript: string[]): Promise<string> {
-  return callCommand("ask_assistant", z.string(), { question, transcript });
+export function askAssistant(
+  question: string,
+  transcript: string[],
+  summary: string,
+): Promise<string> {
+  return callCommand("ask_assistant", z.string(), { question, transcript, summary });
+}
+
+/** Fold new transcript lines into the running session summary. */
+export function assistantSummarize(previous: string, lines: string[]): Promise<string> {
+  return callCommand("assistant_summarize", z.string(), { previous, lines });
+}
+
+/** Turn the assistant on or off, updating settings and the answer panel. */
+export function setAssistantEnabled(enabled: boolean): Promise<void> {
+  return callCommand("set_assistant_enabled", voidResult, { enabled });
 }
 
 /** Enable or configure a provider. */
@@ -232,8 +263,18 @@ export function getSessionStatus(): Promise<SessionStatus | null> {
 }
 
 /** Hide a floating overlay without ending the session. */
-export function hideOverlay(overlay: "captions" | "controller"): Promise<void> {
+export function hideOverlay(overlay: "captions" | "controller" | "assistant"): Promise<void> {
   return callCommand("hide_overlay", voidResult, { overlay });
+}
+
+/** Recentre the captions along the bottom of the screen. */
+export function resetCaptionPosition(): Promise<void> {
+  return callCommand("reset_caption_position", voidResult);
+}
+
+/** Turn caption click-through on or off and apply it immediately. */
+export function setCaptionClickThrough(clickThrough: boolean): Promise<void> {
+  return callCommand("set_caption_click_through", voidResult, { clickThrough });
 }
 
 /** Bring the main window to the front, restoring session overlays with it. */

@@ -54,6 +54,7 @@ export function installDevIpcMock(): void {
       notes: "",
       answerOwnQuestions: false,
     },
+    updates: { channel: "stable", checkOnStartup: true },
     providers: [],
   };
 

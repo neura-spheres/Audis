@@ -135,6 +135,76 @@ impl CloudEngine {
         Ok(parsed.text)
     }
 
+    /// Deepgram's `POST /listen`, with the audio as the raw request body.
+    ///
+    /// A purpose-built speech engine, so unlike the chat-model path there is no
+    /// prompt to get wrong and nothing to talk it out of role.
+    fn transcribe_deepgram(&self, wav: Vec<u8>, language: Language) -> Result<String> {
+        // smart_format gives punctuation and capitalisation, which captions
+        // need to read as sentences rather than a stream of words.
+        let url = format!(
+            "{}/listen?model={}&language={}&smart_format=true",
+            self.base_url,
+            self.model.trim(),
+            language.code()
+        );
+
+        let response = self
+            .client
+            .post(url)
+            .header("Authorization", format!("Token {}", self.api_key))
+            .header("Content-Type", "audio/wav")
+            .body(wav)
+            .send()
+            .map_err(|error| AsrError::ProviderUnreachable {
+                provider: self.provider_name(),
+                detail: error.to_string(),
+            })?;
+
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+
+        if !status.is_success() {
+            return Err(AsrError::ProviderRejected {
+                provider: self.provider_name(),
+                status: status.as_u16(),
+                detail: body.chars().take(300).collect(),
+            });
+        }
+
+        #[derive(serde::Deserialize)]
+        struct Response {
+            results: Results,
+        }
+        #[derive(serde::Deserialize)]
+        struct Results {
+            channels: Vec<Channel>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Channel {
+            alternatives: Vec<Alternative>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Alternative {
+            transcript: String,
+        }
+
+        let parsed: Response =
+            serde_json::from_str(&body).map_err(|error| AsrError::Recognition {
+                detail: format!("could not read the response: {error}"),
+            })?;
+
+        // Silence comes back as an empty alternatives list rather than an error.
+        Ok(parsed
+            .results
+            .channels
+            .into_iter()
+            .next()
+            .and_then(|channel| channel.alternatives.into_iter().next())
+            .map(|alternative| alternative.transcript)
+            .unwrap_or_default())
+    }
+
     /// Gemini's `generateContent`, with the audio inline.
     fn transcribe_gemini(&self, wav: Vec<u8>, language: Language) -> Result<String> {
         let audio = base64::engine::general_purpose::STANDARD.encode(&wav);
@@ -143,19 +213,31 @@ impl CloudEngine {
             Language::English => "English",
         };
 
+        // Gemini is a chat model wearing a transcriber's hat, and it will fall
+        // back to being an assistant ("Hi, how can I help you?") given half a
+        // chance. Two things keep it in role: a system instruction it cannot
+        // talk its way out of, and a sentinel to emit for silence — asked to
+        // "reply with nothing" it would rather greet the user than say nothing.
         let body = serde_json::json!({
+            "systemInstruction": {
+                "parts": [{ "text": format!(
+                    "You are a speech-to-text engine, not an assistant. You transcribe \
+                     {language_name} audio verbatim and do nothing else. Never greet, never \
+                     answer, never explain, never apologise, never describe the audio. Output \
+                     only the exact words spoken, with no quotation marks and no added \
+                     punctuation beyond what is spoken. If the audio contains no intelligible \
+                     speech, output exactly {NO_SPEECH} and nothing else."
+                ) }]
+            },
             "contents": [{
                 "parts": [
-                    { "text": format!(
-                        "Transcribe this {language_name} audio exactly as spoken. Reply with the \
-                         transcription only: no translation, no summary, no commentary, no \
-                         quotation marks. If there is no speech, reply with nothing at all."
-                    ) },
+                    { "text": format!("Transcribe this {language_name} audio verbatim.") },
                     { "inline_data": { "mime_type": "audio/wav", "data": audio } }
                 ]
             }],
             "generationConfig": {
-                "temperature": 0.0
+                "temperature": 0.0,
+                "maxOutputTokens": 256
             }
         });
 
@@ -196,6 +278,7 @@ impl AsrEngine for CloudEngine {
             ProviderId::OpenAiCompatible => "openai-compatible",
             ProviderId::DeepSeek => "deepseek",
             ProviderId::Anthropic => "anthropic",
+            ProviderId::Deepgram => "deepgram",
         }
     }
 
@@ -208,12 +291,17 @@ impl AsrEngine for CloudEngine {
     }
 
     fn transcribe(&mut self, utterance: &Utterance, language: Language) -> Result<AsrResult> {
-        if utterance.samples.len() < 1_600 {
-            return Ok(AsrResult {
-                text: String::new(),
-                language,
-                confidence: None,
-            });
+        let quiet = AsrResult {
+            text: String::new(),
+            language,
+            confidence: None,
+        };
+
+        // Never spend a round-trip on audio with no speech in it. Besides the
+        // waste, a chat-based provider handed silence tends to invent a reply
+        // rather than return nothing.
+        if utterance.samples.len() < MIN_SAMPLES || rms(&utterance.samples) < MIN_SPEECH_RMS {
+            return Ok(quiet);
         }
 
         let wav = encode_wav(&utterance.samples, SAMPLE_RATE);
@@ -228,6 +316,7 @@ impl AsrEngine for CloudEngine {
         let text = match self.support.api {
             SpeechApi::OpenAiTranscriptions => self.transcribe_openai(wav, language)?,
             SpeechApi::GeminiInline => self.transcribe_gemini(wav, language)?,
+            SpeechApi::DeepgramListen => self.transcribe_deepgram(wav, language)?,
         };
         tracing::debug!(
             provider = ?self.provider,
@@ -236,12 +325,40 @@ impl AsrEngine for CloudEngine {
             "provider transcription returned"
         );
 
+        let text = text.trim();
+        if text.is_empty() || text.contains(NO_SPEECH) {
+            return Ok(quiet);
+        }
+
         Ok(AsrResult {
-            text: text.trim().to_owned(),
+            text: text.to_owned(),
             language,
             confidence: None,
         })
     }
+}
+
+/// What a chat-based provider is told to emit when it hears no speech.
+///
+/// Filtered out before anything reaches a caption. Deliberately not a word
+/// anyone would say out loud, so a real transcript can never collide with it.
+const NO_SPEECH: &str = "<no_speech>";
+
+/// Shortest audio worth sending: below this there is nothing to transcribe.
+const MIN_SAMPLES: usize = SAMPLE_RATE as usize / 5;
+
+/// Loudness below which audio is treated as silence rather than speech.
+///
+/// Matches the endpointer's own gate, so the two agree on what silence is.
+const MIN_SPEECH_RMS: f32 = 0.008;
+
+/// Root-mean-square loudness of a block of samples.
+fn rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let sum: f32 = samples.iter().map(|sample| sample * sample).sum();
+    (sum / samples.len() as f32).sqrt()
 }
 
 fn resolve_base_url(
@@ -347,6 +464,30 @@ pub fn fetch_models(
             ids.sort();
             ids
         }
+        SpeechApi::DeepgramListen => {
+            // The speech models are the `stt` list, so there is no guessing from
+            // the name. Deepgram has nothing to offer the assistant.
+            if matches!(purpose, ModelPurpose::Chat) {
+                Vec::new()
+            } else {
+                let body = get_json(
+                    client
+                        .get(format!("{base_url}/models"))
+                        .header("Authorization", format!("Token {api_key}")),
+                    &name,
+                )?;
+                let mut ids: Vec<String> = body
+                    .get("stt")
+                    .and_then(|stt| stt.as_array())
+                    .map(|entries| entries.iter().filter_map(deepgram_speech_model).collect())
+                    .unwrap_or_default();
+                ids.sort();
+                ids.dedup();
+                // Newest generation first, so the best answer leads.
+                ids.reverse();
+                ids
+            }
+        }
     };
 
     if models.is_empty() {
@@ -434,6 +575,34 @@ fn gemini_model_fits(name: &str) -> bool {
         return false;
     }
     name.contains("flash") || name.contains("pro")
+}
+
+/// The general Nova model for one entry in Deepgram's catalogue, if it is one.
+///
+/// Deepgram lists everything it has ever served: legacy tiers (`base`,
+/// `enhanced`), hosted Whisper mirrors (`large`, `medium`), and per-domain
+/// variants (`nova-2-medical`, `nova-2-drivethru`, `nova-2-atc`). Offering all
+/// of that would be asking someone to pick a speech model out of a catalogue
+/// they have no way to judge, when only one answer is ever right for live
+/// captions: the current general Nova.
+///
+/// So this keeps `nova-<n>` and `nova-<n>-general` and drops the rest, reporting
+/// the short form both spellings resolve to. A new generation appears here on
+/// its own, without a release.
+fn deepgram_speech_model(entry: &serde_json::Value) -> Option<String> {
+    let canonical = entry
+        .get("canonical_name")
+        .and_then(|name| name.as_str())?
+        .trim();
+
+    let generation = canonical.strip_prefix("nova-")?;
+    let generation = generation.strip_suffix("-general").unwrap_or(generation);
+
+    if generation.is_empty() || !generation.chars().all(|char| char.is_ascii_digit()) {
+        return None;
+    }
+
+    Some(format!("nova-{generation}"))
 }
 
 fn supports_generate_content(entry: &serde_json::Value) -> bool {
@@ -525,6 +694,65 @@ mod tests {
                 "{rejected} cannot transcribe and must not be offered"
             );
         }
+    }
+
+    /// One entry as Deepgram's `stt` list carries it.
+    fn stt_entry(canonical: &str) -> serde_json::Value {
+        serde_json::json!({ "canonical_name": canonical, "name": canonical })
+    }
+
+    #[test]
+    fn deepgram_filter_keeps_the_general_nova_models() {
+        assert_eq!(
+            deepgram_speech_model(&stt_entry("nova-3-general")).as_deref(),
+            Some("nova-3")
+        );
+        assert_eq!(
+            deepgram_speech_model(&stt_entry("nova-2-general")).as_deref(),
+            Some("nova-2")
+        );
+        // Both spellings are accepted by the API and mean the same model.
+        assert_eq!(
+            deepgram_speech_model(&stt_entry("nova-3")).as_deref(),
+            Some("nova-3")
+        );
+    }
+
+    #[test]
+    fn deepgram_filter_drops_everything_nobody_should_pick_for_captions() {
+        // Every one of these is really in Deepgram's catalogue, and every one of
+        // them was in the dropdown before this filter existed.
+        for rejected in [
+            "nova-2-atc",
+            "nova-2-meeting",
+            "nova-2-phonecall",
+            "nova-2-medical",
+            "nova-2-drivethru",
+            "nova-2-automotive",
+            "nova-2-finance",
+            "base",
+            "enhanced",
+            "large",
+            "medium",
+            "small",
+            "phoneme",
+            "conversationalai",
+            "general-dQw4w9WgXcQ",
+            "general-polaris",
+        ] {
+            assert!(
+                deepgram_speech_model(&stt_entry(rejected)).is_none(),
+                "{rejected} should not be offered as a speech model"
+            );
+        }
+    }
+
+    #[test]
+    fn deepgram_filter_picks_up_a_future_generation_without_a_release() {
+        assert_eq!(
+            deepgram_speech_model(&stt_entry("nova-4-general")).as_deref(),
+            Some("nova-4")
+        );
     }
 
     #[test]

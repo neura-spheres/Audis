@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 
 import { App } from "@/app/App";
+import { AssistantOverlay } from "@/features/assistant/AssistantOverlay";
 import { CaptionWindow } from "@/features/captions/CaptionWindow";
 import { ControllerWindow } from "@/features/controller/ControllerWindow";
 import { startThemeSync } from "@/stores/theme";
@@ -20,7 +21,8 @@ if (!container) {
 }
 
 const whichWindow = new URLSearchParams(window.location.search).get("window");
-const isOverlay = whichWindow === "captions" || whichWindow === "controller";
+const isOverlay =
+  whichWindow === "captions" || whichWindow === "controller" || whichWindow === "assistant";
 
 if (isOverlay) {
   document.documentElement.dataset.audisWindow = whichWindow ?? "";
@@ -32,6 +34,8 @@ function selectRoot() {
       return <CaptionWindow />;
     case "controller":
       return <ControllerWindow />;
+    case "assistant":
+      return <AssistantOverlay />;
     default:
       return <App />;
   }

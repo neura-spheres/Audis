@@ -29,7 +29,9 @@ export function AssistantView() {
   if (!settings) return null;
 
   const a = settings.assistant;
-  const keyed = (providers ?? []).filter((p) => p.hasKey);
+  // A key is not enough: a speech-only provider like Deepgram has no chat
+  // endpoint, so offering it here would only produce a request that cannot land.
+  const keyed = (providers ?? []).filter((p) => p.hasKey && p.info.chat !== null);
   const hasKeyForChosen = keyed.some((p) => p.info.id === a.provider);
 
   const set = (patch: Partial<typeof a>) =>
@@ -90,20 +92,25 @@ export function AssistantView() {
                 />
               ))}
             </div>
+          </section>
 
-            <label className="flex flex-col gap-1 px-1">
-              <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
-                Notes (optional) — anything specific, e.g. "Senior Rust role at a fintech"
-              </span>
-              <textarea
-                value={a.notes}
-                onChange={(e) => set({ notes: e.target.value })}
-                rows={2}
-                placeholder="Describe the meeting, the role, the topic…"
-                className="w-full resize-none px-2.5 py-2 text-footnote"
-                style={inputStyle}
-              />
-            </label>
+          <section className="flex flex-col gap-2">
+            <h2 className="px-1 text-subheadline font-semibold">What should the AI know?</h2>
+            <p className="px-1 text-footnote" style={{ color: "var(--label-secondary)" }}>
+              Type anything you want the assistant to keep in mind — the topic, who is speaking, the
+              role you are interviewing for, terms it should use. It is sent with every answer.
+            </p>
+            <textarea
+              value={a.notes}
+              onChange={(e) => set({ notes: e.target.value })}
+              rows={5}
+              placeholder={
+                'e.g. "This is a senior Rust interview at a fintech. I am the candidate. ' +
+                'Prefer concrete, technical answers."'
+              }
+              className="w-full resize-y px-3 py-2.5 text-footnote"
+              style={inputStyle}
+            />
           </section>
 
           <section className="flex flex-col gap-3">
@@ -298,7 +305,7 @@ function AskBox({ disabled }: { disabled: boolean }) {
     busy.current = true;
     setText("");
     const id = addQuestion(question);
-    askAssistant(question, [])
+    askAssistant(question, [], "")
       .then((answer) => (answer.trim() ? resolveAnswer(id, answer) : dropEntry(id)))
       .catch((error: unknown) => failAnswer(id, String(error)))
       .finally(() => {

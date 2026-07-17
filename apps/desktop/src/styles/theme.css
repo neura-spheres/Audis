@@ -136,7 +136,8 @@
    * rectangle across the whole window and the "transparent" overlay becomes a
    * black slab with content inside it. */
   :root[data-audis-window="captions"] body,
-  :root[data-audis-window="controller"] body {
+  :root[data-audis-window="controller"] body,
+  :root[data-audis-window="assistant"] body {
     background-color: transparent;
   }
 

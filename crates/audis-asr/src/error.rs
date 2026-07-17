@@ -96,10 +96,19 @@ impl AsrError {
             AsrError::ProviderRejected {
                 provider, status, ..
             } => UserFacingError {
-                title: format!("{provider} refused the request"),
+                title: match status {
+                    402 => format!("{provider} has run out of credit"),
+                    429 => format!("{provider} is rate limiting Audis"),
+                    _ => format!("{provider} refused the request"),
+                },
                 explanation: match status {
                     401 | 403 => format!(
-                        "{provider} did not accept your API key. It may be wrong, revoked, or                          lack permission for speech."
+                        "{provider} did not accept your API key. It may be wrong, revoked, or \
+                         lack permission for speech."
+                    ),
+                    402 => format!(
+                        "Your {provider} account has no credit left, so it is refusing every \
+                         request. Nothing you said was transcribed."
                     ),
                     429 => format!(
                         "You have hit {provider}'s rate limit, or run out of free quota for now."
@@ -109,7 +118,12 @@ impl AsrError {
                 data_preserved: true,
                 suggested_action: match status {
                     401 | 403 => "Open Providers and save the key again.".to_owned(),
-                    429 => "Wait a little, or switch to a model that runs on this PC in                             Transcription."
+                    402 => format!(
+                        "Add credit to your {provider} account, or pick another speech engine in \
+                         Transcription. Running Whisper on this PC is free."
+                    ),
+                    429 => "Wait a little, or switch to a model that runs on this PC in \
+                            Transcription."
                         .to_owned(),
                     _ => "Try again. If it continues, switch to a model that runs on this PC."
                         .to_owned(),
@@ -187,6 +201,56 @@ impl serde::Serialize for AsrError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rejected(status: u16) -> AsrError {
+        AsrError::ProviderRejected {
+            provider: "Deepgram".to_owned(),
+            status,
+            detail: r#"{"err_code":"ASR_PAYMENT_REQUIRED"}"#.to_owned(),
+        }
+    }
+
+    #[test]
+    fn running_out_of_credit_says_so_and_offers_a_way_out() {
+        // A real 402 from Deepgram once read as "returned an error", which told
+        // the user nothing they could act on.
+        let facing = rejected(402).to_user_facing();
+
+        assert!(facing.title.contains("run out of credit"));
+        assert!(facing.explanation.contains("no credit left"));
+        // The way out has to be reachable without spending money.
+        assert!(facing.suggested_action.contains("Transcription"));
+        assert!(facing.suggested_action.contains("free"));
+    }
+
+    #[test]
+    fn a_rejected_key_and_a_rate_limit_do_not_read_the_same() {
+        let key = rejected(401).to_user_facing();
+        let limit = rejected(429).to_user_facing();
+        let credit = rejected(402).to_user_facing();
+
+        assert!(key.explanation.contains("API key"));
+        assert!(limit.explanation.contains("rate limit"));
+
+        // Three different faults with three different fixes: if any two read the
+        // same, the message is not doing its job.
+        assert_ne!(key.suggested_action, limit.suggested_action);
+        assert_ne!(limit.suggested_action, credit.suggested_action);
+        assert_ne!(key.suggested_action, credit.suggested_action);
+    }
+
+    #[test]
+    fn a_provider_message_never_arrives_with_the_gaps_a_broken_wrap_leaves() {
+        for status in [401, 402, 429, 500] {
+            let facing = rejected(status).to_user_facing();
+            for text in [&facing.title, &facing.explanation, &facing.suggested_action] {
+                assert!(
+                    !text.contains("  "),
+                    "{status} reads with a run of spaces in it: {text:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn no_recognition_error_claims_data_was_lost() {

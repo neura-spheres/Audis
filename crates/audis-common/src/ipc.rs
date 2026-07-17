@@ -42,6 +42,9 @@ pub mod events {
     /// Update check, download and install progress.
     pub const UPDATE_STATUS: &str = "audis://update/status";
 
+    /// How far a download of a new version has got.
+    pub const UPDATE_PROGRESS: &str = "audis://update/progress";
+
     /// Non-fatal warning worth surfacing quietly, such as dropped frames.
     pub const DIAGNOSTIC_WARNING: &str = "audis://diagnostic/warning";
 
@@ -65,6 +68,7 @@ pub mod events {
         ASSISTANT_RESPONSE,
         MEETING_UPDATE,
         UPDATE_STATUS,
+        UPDATE_PROGRESS,
         DIAGNOSTIC_WARNING,
         MODEL_PROGRESS,
         SETTINGS_CHANGED,

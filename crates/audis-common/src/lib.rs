@@ -30,6 +30,6 @@ pub use providers::{
 pub use session::{SessionMode, SessionState, SessionStatus};
 pub use settings::{
     AssistantContext, AssistantSettings, AudioSettings, CaptionSettings, Settings,
-    TranscriptionEngine, TranscriptionSettings,
+    TranscriptionEngine, TranscriptionSettings, UpdateChannel, UpdateSettings,
 };
 pub use transcript::{AsrState, AsrStatus, TranscriptSegment};

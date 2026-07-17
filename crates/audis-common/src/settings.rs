@@ -155,11 +155,45 @@ pub struct CaptionSettings {
 impl Default for CaptionSettings {
     fn default() -> Self {
         Self {
-            font_size: 28,
-            max_lines: 3,
+            font_size: 22,
+            max_lines: 2,
             background_opacity: 70,
             show_source_labels: true,
             click_through: false,
+        }
+    }
+}
+
+/// Which releases Audis offers to update to.
+///
+/// The two map onto a tag convention on GitHub: a stable release is tagged
+/// `vX.Y.Z`, a beta `vX.Y.Z-beta.N` and published as a pre-release. Semver
+/// already orders those correctly, so `1.2.0-beta.1` is older than `1.2.0`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateChannel {
+    /// Finished releases only.
+    #[default]
+    Stable,
+    /// Betas as well as finished releases, whichever is newer.
+    Beta,
+}
+
+/// How Audis looks for new versions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct UpdateSettings {
+    /// Which releases to offer.
+    pub channel: UpdateChannel,
+    /// Look for a new version when Audis starts.
+    pub check_on_startup: bool,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            channel: UpdateChannel::Stable,
+            check_on_startup: true,
         }
     }
 }
@@ -232,7 +266,10 @@ impl Default for AssistantSettings {
         Self {
             enabled: false,
             provider: crate::providers::ProviderId::Gemini,
-            model: crate::providers::ProviderId::Gemini.chat().default_model,
+            model: crate::providers::ProviderId::Gemini
+                .chat()
+                .map(|chat| chat.default_model)
+                .unwrap_or_default(),
             context: AssistantContext::default(),
             notes: String::new(),
             answer_own_questions: false,
@@ -258,6 +295,8 @@ pub struct Settings {
     pub shortcuts: ShortcutSettings,
     /// The AI assistant.
     pub assistant: AssistantSettings,
+    /// How Audis looks for new versions.
+    pub updates: UpdateSettings,
     /// Configured AI providers.
     pub providers: Vec<crate::providers::ProviderConfig>,
 }
@@ -272,6 +311,7 @@ impl Default for Settings {
             captions: CaptionSettings::default(),
             shortcuts: ShortcutSettings::default(),
             assistant: AssistantSettings::default(),
+            updates: UpdateSettings::default(),
             providers: Vec::new(),
         }
     }

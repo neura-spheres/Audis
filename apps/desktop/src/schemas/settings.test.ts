@@ -45,6 +45,10 @@ describe("settings round-trip", () => {
       notes: "Senior Rust role",
       answerOwnQuestions: false,
     },
+    updates: {
+      channel: "beta",
+      checkOnStartup: true,
+    },
     providers: [
       {
         id: "gemini",

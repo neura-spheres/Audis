@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 
+import { AsrProblemBanner } from "@/app/AsrProblemBanner";
 import { Sidebar } from "@/components/Sidebar";
 import { findNavItem, type ViewId } from "@/app/navigation";
 import { DashboardView } from "@/features/dashboard/DashboardView";
@@ -18,8 +19,9 @@ import { ProvidersView } from "@/features/providers/ProvidersView";
 import { TranscriptionView } from "@/features/transcription/TranscriptionView";
 import { ShortcutsView } from "@/features/shortcuts/ShortcutsView";
 import { AssistantView } from "@/features/assistant/AssistantView";
+import { useStartupUpdateCheck } from "@/features/about/useStartupUpdateCheck";
 import { useAssistantEngine } from "@/features/assistant/useAssistantEngine";
-import { SpeakersView, UpdatesView } from "@/features/settings/PlannedViews";
+import { SpeakersView } from "@/features/settings/PlannedViews";
 
 /** Main window shell: a source list on the left, a titled content pane on the */
 export function App() {
@@ -29,6 +31,7 @@ export function App() {
   // Runs the assistant whatever view is open, so answers keep coming while you
   // watch the transcript rather than only on the assistant screen.
   useAssistantEngine();
+  useStartupUpdateCheck();
 
   return (
     <div className="flex h-full w-full overflow-hidden">
@@ -51,6 +54,8 @@ export function App() {
             {active?.title ?? "Audis"}
           </h1>
         </header>
+
+        <AsrProblemBanner />
 
         <div key={activeId} className="flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-[760px] px-6 py-6">
@@ -92,8 +97,6 @@ function renderView(id: ViewId, navigate: (id: ViewId) => void): ReactNode {
       return <ModelsView />;
     case "storage":
       return <StorageView />;
-    case "updates":
-      return <UpdatesView />;
     case "privacy":
       return <PrivacyView />;
     case "diagnostics":

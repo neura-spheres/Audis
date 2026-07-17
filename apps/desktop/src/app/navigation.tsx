@@ -17,7 +17,6 @@ import {
   SpeakerIcon,
   StethoscopeIcon,
   TextIcon,
-  UpdateIcon,
 } from "@/components/icons";
 
 /** The application's information architecture. */
@@ -37,7 +36,6 @@ export type ViewId =
   | "providers"
   | "models"
   | "storage"
-  | "updates"
   | "privacy"
   | "diagnostics"
   | "about";
@@ -83,7 +81,6 @@ export const NAV_GROUPS: readonly NavGroup[] = [
       { id: "providers", label: "Providers", icon: <KeyIcon />, title: "Providers" },
       { id: "models", label: "Models", icon: <BellIcon />, title: "Local models" },
       { id: "storage", label: "Storage", icon: <FolderIcon />, title: "Storage" },
-      { id: "updates", label: "Updates", icon: <UpdateIcon />, title: "Updates" },
       { id: "privacy", label: "Privacy", icon: <LockIcon />, title: "Privacy" },
       {
         id: "diagnostics",

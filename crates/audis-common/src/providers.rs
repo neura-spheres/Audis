@@ -14,6 +14,8 @@ pub enum ProviderId {
     Groq,
     /// Strong quality, no free tier.
     Anthropic,
+    /// A dedicated speech engine. Transcribes only; it does not converse.
+    Deepgram,
     /// Any OpenAI-compatible endpoint, including a local one such as Ollama.
     OpenAiCompatible,
 }
@@ -40,6 +42,8 @@ pub struct ProviderInfo {
     pub needs_endpoint: bool,
     /// How this provider transcribes speech, or `None` if it cannot.
     pub speech: Option<SpeechSupport>,
+    /// How this provider holds a conversation, or `None` if it cannot.
+    pub chat: Option<ChatSupport>,
 }
 
 /// The shape of a provider's speech-to-text API.
@@ -50,6 +54,8 @@ pub enum SpeechApi {
     OpenAiTranscriptions,
     /// Gemini's `generateContent` with the audio inline.
     GeminiInline,
+    /// Deepgram's `POST /listen`, with the audio as the raw body.
+    DeepgramListen,
 }
 
 /// How a provider transcribes speech.
@@ -96,9 +102,10 @@ pub struct ChatSupport {
 
 impl ProviderId {
     /// Every provider, best default first.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Gemini,
         Self::Groq,
+        Self::Deepgram,
         Self::DeepSeek,
         Self::Anthropic,
         Self::OpenAiCompatible,
@@ -116,6 +123,7 @@ impl ProviderId {
             Self::DeepSeek => "deepseek",
             Self::Groq => "groq",
             Self::Anthropic => "anthropic",
+            Self::Deepgram => "deepgram",
             Self::OpenAiCompatible => "openai-compatible",
         }
     }
@@ -162,6 +170,14 @@ impl ProviderId {
                           accurate, or point it at a whisper server on your own network."
                     .to_owned(),
             }),
+            Self::Deepgram => Some(SpeechSupport {
+                api: SpeechApi::DeepgramListen,
+                base_url: Some("https://api.deepgram.com/v1".to_owned()),
+                default_model: "nova-3".to_owned(),
+                models: vec!["nova-3".to_owned(), "nova-2".to_owned()],
+                summary: "A dedicated speech engine rather than a general model asked to \n                          transcribe, so it will not wander off and answer the \n                          audio. Fast, accurate, and good at both Indonesian and \n                          English."
+                    .to_owned(),
+            }),
             Self::DeepSeek | Self::Anthropic => None,
         }
     }
@@ -171,18 +187,25 @@ impl ProviderId {
         self.speech().is_some()
     }
 
-    /// How this provider holds a conversation for the assistant.
+    /// True when this provider can hold a conversation for the assistant.
+    pub fn can_chat(self) -> bool {
+        self.chat().is_some()
+    }
+
+    /// How this provider holds a conversation for the assistant, or `None` when
+    /// it cannot.
     ///
-    /// Every provider can chat, so this is never `None`.
-    pub fn chat(self) -> ChatSupport {
+    /// A dedicated speech engine transcribes and nothing else; offering it to
+    /// the assistant would only produce a request it has no endpoint for.
+    pub fn chat(self) -> Option<ChatSupport> {
         match self {
-            Self::Gemini => ChatSupport {
+            Self::Gemini => Some(ChatSupport {
                 api: ChatApi::GeminiGenerate,
                 base_url: Some("https://generativelanguage.googleapis.com/v1beta".to_owned()),
                 default_model: "gemini-2.0-flash".to_owned(),
                 models: vec!["gemini-2.0-flash".to_owned(), "gemini-2.5-flash".to_owned()],
-            },
-            Self::Groq => ChatSupport {
+            }),
+            Self::Groq => Some(ChatSupport {
                 api: ChatApi::OpenAiChat,
                 base_url: Some("https://api.groq.com/openai/v1".to_owned()),
                 default_model: "llama-3.3-70b-versatile".to_owned(),
@@ -190,14 +213,14 @@ impl ProviderId {
                     "llama-3.3-70b-versatile".to_owned(),
                     "llama-3.1-8b-instant".to_owned(),
                 ],
-            },
-            Self::DeepSeek => ChatSupport {
+            }),
+            Self::DeepSeek => Some(ChatSupport {
                 api: ChatApi::OpenAiChat,
                 base_url: Some("https://api.deepseek.com".to_owned()),
                 default_model: "deepseek-chat".to_owned(),
                 models: vec!["deepseek-chat".to_owned(), "deepseek-reasoner".to_owned()],
-            },
-            Self::Anthropic => ChatSupport {
+            }),
+            Self::Anthropic => Some(ChatSupport {
                 api: ChatApi::AnthropicMessages,
                 base_url: Some("https://api.anthropic.com/v1".to_owned()),
                 default_model: "claude-3-5-haiku-latest".to_owned(),
@@ -205,13 +228,15 @@ impl ProviderId {
                     "claude-3-5-haiku-latest".to_owned(),
                     "claude-3-5-sonnet-latest".to_owned(),
                 ],
-            },
-            Self::OpenAiCompatible => ChatSupport {
+            }),
+            Self::OpenAiCompatible => Some(ChatSupport {
                 api: ChatApi::OpenAiChat,
                 base_url: None,
                 default_model: "gpt-4o-mini".to_owned(),
                 models: vec!["gpt-4o-mini".to_owned(), "gpt-4o".to_owned()],
-            },
+            }),
+            // Deepgram transcribes and nothing else: it has no chat endpoint.
+            Self::Deepgram => None,
         }
     }
 
@@ -255,6 +280,15 @@ impl ProviderId {
                     vec!["claude-haiku-4-5-20251001", "claude-sonnet-5"],
                     false,
                 ),
+                Self::Deepgram => (
+                    "Deepgram",
+                    "A dedicated speech engine. Transcribes only; it cannot run the assistant.",
+                    "https://console.deepgram.com/signup",
+                    true,
+                    "nova-3",
+                    vec!["nova-3", "nova-2"],
+                    false,
+                ),
                 Self::OpenAiCompatible => (
                     "Custom (OpenAI-compatible)",
                     "Any OpenAI-compatible endpoint, including a local model server.",
@@ -276,6 +310,7 @@ impl ProviderId {
             models: models.into_iter().map(str::to_owned).collect(),
             needs_endpoint,
             speech: self.speech(),
+            chat: self.chat(),
         }
     }
 }
@@ -345,6 +380,52 @@ mod tests {
     }
 
     /// The product promise is that a free option exists.
+    #[test]
+    fn a_provider_supports_speech_or_chat_or_both_but_is_never_useless() {
+        for provider in ProviderId::ALL {
+            assert!(
+                provider.can_transcribe() || provider.can_chat(),
+                "{provider:?} can do neither, so nothing could ever use it"
+            );
+        }
+    }
+
+    #[test]
+    fn deepgram_transcribes_but_cannot_chat() {
+        // A dedicated speech engine has no chat endpoint. Offering it to the
+        // assistant would only produce a request that cannot land, so the
+        // catalogue has to say so rather than the UI guessing.
+        assert!(ProviderId::Deepgram.can_transcribe());
+        assert!(!ProviderId::Deepgram.can_chat());
+        assert!(ProviderId::Deepgram.info().chat.is_none());
+    }
+
+    #[test]
+    fn deepgram_speaks_over_its_own_api_shape() {
+        let speech = ProviderId::Deepgram
+            .speech()
+            .expect("Deepgram transcribes speech");
+        assert_eq!(speech.api, SpeechApi::DeepgramListen);
+        assert_eq!(speech.default_model, "nova-3");
+    }
+
+    #[test]
+    fn every_speech_provider_names_a_default_model_it_also_offers() {
+        for provider in ProviderId::ALL {
+            let Some(speech) = provider.speech() else {
+                continue;
+            };
+            // OpenAI-compatible is user-supplied, so its list is a suggestion.
+            if provider == ProviderId::OpenAiCompatible {
+                continue;
+            }
+            assert!(
+                speech.models.contains(&speech.default_model),
+                "{provider:?} defaults to a speech model it does not list"
+            );
+        }
+    }
+
     #[test]
     fn at_least_one_provider_has_a_free_tier() {
         assert!(ProviderId::ALL.iter().any(|id| id.info().free_tier));

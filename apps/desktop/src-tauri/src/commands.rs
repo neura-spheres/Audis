@@ -64,6 +64,106 @@ pub fn apply_caption_click_through(app: &tauri::AppHandle, click_through: bool) 
     }
 }
 
+/// How far above the bottom of the screen the captions sit, in logical pixels.
+const CAPTION_BOTTOM_MARGIN: f64 = 64.0;
+
+/// Recentre the captions along the bottom and let them follow the content again.
+#[tauri::command]
+pub fn reset_caption_position(app: tauri::AppHandle) -> Result<()> {
+    if let Some(window) = app.get_webview_window("captions")
+        && let (Ok(size), Ok(Some(monitor))) = (window.outer_size(), window.primary_monitor())
+    {
+        let scale = monitor.scale_factor();
+        let screen_w = f64::from(monitor.size().width) / scale;
+        let screen_h = f64::from(monitor.size().height) / scale;
+        let win_w = f64::from(size.width) / scale;
+        let win_h = f64::from(size.height) / scale;
+        let x = ((screen_w - win_w) / 2.0).max(0.0);
+        let y = (screen_h - win_h - CAPTION_BOTTOM_MARGIN).max(0.0);
+        window.set_position(tauri::LogicalPosition::new(x, y)).ok();
+    }
+
+    Ok(())
+}
+
+/// Turn caption click-through on or off from anywhere, and apply it at once.
+#[tauri::command]
+pub fn set_caption_click_through(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    click_through: bool,
+) -> Result<()> {
+    let mut settings = state.settings.get();
+    settings.captions.click_through = click_through;
+    let saved = state.settings.set(settings)?;
+    apply_caption_click_through(&app, click_through);
+    app.emit(audis_common::events::SETTINGS_CHANGED, &saved)
+        .ok();
+    Ok(())
+}
+
+/// Look for a newer version of Audis on the user's chosen channel.
+#[tauri::command]
+pub async fn check_for_updates(app: tauri::AppHandle) -> Result<crate::updates::UpdateCheck> {
+    let channel = app.state::<AppState>().settings.get().updates.channel;
+    let result = crate::updates::check(channel, env!("CARGO_PKG_VERSION")).await?;
+
+    app.emit(audis_common::events::UPDATE_STATUS, &result).ok();
+
+    Ok(result)
+}
+
+/// Download and install the newest release on the user's channel, then restart.
+///
+/// The release is looked up again rather than taken from the caller, so what
+/// gets installed is decided here against the saved channel, not by whatever the
+/// UI happened to be showing.
+#[tauri::command]
+pub async fn install_update(app: tauri::AppHandle) -> Result<()> {
+    let channel = app.state::<AppState>().settings.get().updates.channel;
+    let found = crate::updates::check(channel, env!("CARGO_PKG_VERSION")).await?;
+
+    let Some(release) = found.update else {
+        tracing::info!("nothing to install: already up to date");
+        return Ok(());
+    };
+
+    let Some(manifest) = release.manifest_url else {
+        return Err(audis_common::AudisError::Configuration {
+            detail: format!(
+                "Version {} has no installer Audis can verify, so it cannot install it for you. \
+                 Use Download to install it yourself.",
+                release.version
+            ),
+        });
+    };
+
+    crate::updates::install(&app, &manifest).await
+}
+
+/// Open a release page in the browser so the user can install it themselves.
+///
+/// The URL is checked against the Audis repository rather than trusted: it
+/// arrives from a network response, and opening whatever that response happened
+/// to contain would hand a link of someone else's choosing to the browser.
+#[tauri::command]
+pub fn open_release_page(app: tauri::AppHandle, url: String) -> Result<()> {
+    const RELEASES_PREFIX: &str = "https://github.com/neura-spheres/Audis/releases/";
+
+    if !url.starts_with(RELEASES_PREFIX) {
+        return Err(audis_common::AudisError::InvalidArgument {
+            field: "url".to_owned(),
+            detail: "that is not an Audis release page".to_owned(),
+        });
+    }
+
+    app.opener().open_url(url, None::<&str>).map_err(|error| {
+        audis_common::AudisError::Configuration {
+            detail: format!("the release page could not be opened: {error}"),
+        }
+    })
+}
+
 /// Every file Audis has written, grouped by category.
 #[tauri::command]
 pub fn list_data_files(state: State<'_, AppState>) -> Result<DataFileListing> {
@@ -373,6 +473,7 @@ pub fn hide_overlay(app: tauri::AppHandle, overlay: String) -> Result<()> {
     let which = match overlay.as_str() {
         "captions" => crate::overlays::Overlay::Captions,
         "controller" => crate::overlays::Overlay::Controller,
+        "assistant" => crate::overlays::Overlay::Assistant,
         other => {
             return Err(audis_common::AudisError::InvalidArgument {
                 field: "overlay".to_owned(),
@@ -400,6 +501,9 @@ pub fn open_main_window(
     if session.status().is_some() {
         crate::overlays::show(&app, crate::overlays::Overlay::Captions);
         crate::overlays::show(&app, crate::overlays::Overlay::Controller);
+        if app.state::<AppState>().settings.get().assistant.enabled {
+            crate::overlays::place(&app, crate::overlays::Overlay::Assistant);
+        }
     }
 
     Ok(())
@@ -495,6 +599,7 @@ pub fn start_session(
             computer_audio_id: settings.audio.computer_audio_id.clone(),
             want_microphone: settings.transcription.capture_microphone,
             want_computer_audio: settings.transcription.capture_computer_audio,
+            assistant_enabled: settings.assistant.enabled,
         },
     )
 }
@@ -628,40 +733,43 @@ pub async fn ask_assistant(
     app: tauri::AppHandle,
     question: String,
     transcript: Vec<String>,
+    summary: String,
 ) -> Result<String> {
-    let (provider, model, endpoint, key, system) = {
-        let state = app.state::<AppState>();
-        let settings = state.settings.get();
-        let assistant = settings.assistant;
-
-        let key = crate::credentials::get_key(assistant.provider)?.ok_or(
-            audis_common::AudisError::Configuration {
-                detail: format!(
-                    "The assistant is set to use {}, but no API key is saved for it. Open \
-                     Providers to add one.",
-                    assistant.provider.info().name
-                ),
-            },
-        )?;
-
-        let endpoint = settings
-            .providers
-            .iter()
-            .find(|config| config.id == assistant.provider)
-            .and_then(|config| config.endpoint.clone());
-
-        let system = assistant_system_prompt(assistant.context, &assistant.notes);
-        (assistant.provider, assistant.model, endpoint, key, system)
+    let connection = assistant_connection(&app)?;
+    let system = {
+        let assistant = app.state::<AppState>().settings.get().assistant;
+        assistant_system_prompt(assistant.context, &assistant.notes)
     };
+    let AssistantConnection {
+        provider,
+        model,
+        endpoint,
+        key,
+    } = connection;
 
-    let user = format!(
-        "Recent transcript:\n{}\n\nLatest line / question:\n{question}",
+    let mut user = String::new();
+    if !summary.trim().is_empty() {
+        user.push_str(&format!(
+            "Summary of the session so far:\n{}\n\n",
+            summary.trim()
+        ));
+    }
+    user.push_str(&format!(
+        "Transcript around the question (older lines first):\n{}\n\nThe question to answer:\n{question}",
         transcript.join("\n")
-    );
+    ));
 
     tracing::info!(?provider, %model, "asking the assistant");
 
-    tauri::async_runtime::spawn_blocking(move || {
+    // Broadcast so the assistant overlay and the main window both react, even
+    // though only one of them made the call.
+    app.emit(
+        audis_common::events::ASSISTANT_STATUS,
+        serde_json::json!({ "thinking": true }),
+    )
+    .ok();
+
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
         audis_asr::chat(provider, endpoint, key, &model, &system, &user)
     })
     .await
@@ -676,8 +784,162 @@ pub async fn ask_assistant(
         } else {
             answer.trim().to_owned()
         }
+    });
+
+    app.emit(
+        audis_common::events::ASSISTANT_STATUS,
+        serde_json::json!({ "thinking": false }),
+    )
+    .ok();
+
+    let answer = outcome.map_err(as_configuration)?;
+
+    if !answer.is_empty() {
+        app.emit(
+            audis_common::events::ASSISTANT_RESPONSE,
+            serde_json::json!({
+                "id": uuid::Uuid::new_v4().to_string(),
+                "question": question,
+                "answer": answer,
+            }),
+        )
+        .ok();
+    }
+
+    Ok(answer)
+}
+
+/// Turn the assistant on or off from anywhere, including the controller chip.
+#[tauri::command]
+pub fn set_assistant_enabled(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<()> {
+    let mut settings = state.settings.get();
+    settings.assistant.enabled = enabled;
+    let saved = state.settings.set(settings)?;
+    app.emit(audis_common::events::SETTINGS_CHANGED, &saved)
+        .ok();
+
+    // During a session, place the panel beside the chip when turning on so it is
+    // ready to appear; hide it outright when turning off. The panel itself keeps
+    // its visibility in step with the setting via the settings-changed event.
+    let running = app
+        .state::<crate::session::SessionController>()
+        .status()
+        .is_some();
+    if running {
+        if enabled {
+            crate::overlays::place(&app, crate::overlays::Overlay::Assistant);
+        } else {
+            crate::overlays::hide(&app, crate::overlays::Overlay::Assistant);
+        }
+    }
+
+    tracing::info!(enabled, "assistant toggled");
+    Ok(())
+}
+
+/// Everything needed to reach the assistant's chat provider.
+struct AssistantConnection {
+    provider: audis_common::ProviderId,
+    model: String,
+    endpoint: Option<String>,
+    key: String,
+}
+
+/// Read the assistant's provider, model, endpoint and key from settings.
+fn assistant_connection(app: &tauri::AppHandle) -> Result<AssistantConnection> {
+    let settings = app.state::<AppState>().settings.get();
+    let assistant = settings.assistant;
+
+    let key = crate::credentials::get_key(assistant.provider)?.ok_or(
+        audis_common::AudisError::Configuration {
+            detail: format!(
+                "The assistant is set to use {}, but no API key is saved for it. Open Providers \
+                 to add one.",
+                assistant.provider.info().name
+            ),
+        },
+    )?;
+
+    let endpoint = settings
+        .providers
+        .iter()
+        .find(|config| config.id == assistant.provider)
+        .and_then(|config| config.endpoint.clone());
+
+    Ok(AssistantConnection {
+        provider: assistant.provider,
+        model: assistant.model,
+        endpoint,
+        key,
     })
-    .map_err(as_configuration)
+}
+
+/// Fold new transcript lines into a compact running summary of the session.
+///
+/// This is how the assistant keeps track of a whole call without the cost of
+/// sending the entire transcript with every question: the frontend hands over a
+/// batch of older lines every so often and gets back an updated summary.
+#[tauri::command]
+pub async fn assistant_summarize(
+    app: tauri::AppHandle,
+    previous: String,
+    lines: Vec<String>,
+) -> Result<String> {
+    if lines.is_empty() {
+        return Ok(previous);
+    }
+
+    let AssistantConnection {
+        provider,
+        model,
+        endpoint,
+        key,
+    } = assistant_connection(&app)?;
+
+    let context = app.state::<AppState>().settings.get().assistant.context;
+    let system = assistant_summary_prompt(context);
+
+    let user = format!(
+        "Summary so far (may be empty):\n{}\n\nNew lines to fold in:\n{}",
+        previous.trim(),
+        lines.join("\n")
+    );
+
+    tracing::info!(?provider, %model, lines = lines.len(), "updating the session summary");
+
+    let summary = tauri::async_runtime::spawn_blocking(move || {
+        audis_asr::chat(provider, endpoint, key, &model, &system, &user)
+    })
+    .await
+    .map_err(|error| audis_common::AudisError::Configuration {
+        detail: format!("the summary request could not run: {error}"),
+    })?
+    .map_err(as_configuration)?;
+
+    Ok(summary.trim().to_owned())
+}
+
+fn assistant_summary_prompt(context: audis_common::AssistantContext) -> String {
+    use audis_common::AssistantContext::*;
+
+    let kind = match context {
+        General => "conversation",
+        Meeting => "meeting",
+        Interview => "interview",
+        Quiz => "quiz or test",
+        Lecture => "lecture",
+    };
+
+    format!(
+        "You keep a running summary of a live {kind}. Given the summary so far and new transcript \
+         lines, return an updated summary that stays under 150 words. Keep the concrete facts, \
+         names, numbers, decisions, and open questions; drop small talk and filler. Write it as \
+         plain notes, not a narrative. Output only the summary."
+    )
 }
 
 fn assistant_system_prompt(context: audis_common::AssistantContext, notes: &str) -> String {

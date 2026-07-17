@@ -21,23 +21,3 @@ export function SpeakersView() {
     </NotBuiltYet>
   );
 }
-
-export function UpdatesView() {
-  return (
-    <NotBuiltYet
-      summary="Audis will update itself from signed releases, verifying the signature before anything is installed."
-      planned={[
-        "Stable and beta channels",
-        "Automatic checking and downloading",
-        "Release notes before you install",
-        "Install on exit",
-        "Update history",
-      ]}
-    >
-      <p className="px-3 text-footnote" style={{ color: "var(--label-secondary)" }}>
-        An update with an invalid signature will be refused, and a normal upgrade never touches your
-        sessions or recordings.
-      </p>
-    </NotBuiltYet>
-  );
-}

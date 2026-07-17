@@ -18,8 +18,12 @@ pub fn chat(
     system: &str,
     user: &str,
 ) -> Result<String> {
-    let support = provider.chat();
     let name = provider.info().name;
+    let Some(support) = provider.chat() else {
+        return Err(AsrError::Recognition {
+            detail: format!("{name} transcribes speech but cannot answer questions"),
+        });
+    };
 
     if api_key.trim().is_empty() {
         return Err(AsrError::ProviderKeyMissing { provider: name });

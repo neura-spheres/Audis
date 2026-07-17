@@ -24,6 +24,16 @@ export const userFacingErrorSchema = z.object({
 /** Mirrors `AudioSourceKind`. */
 export const audioSourceKindSchema = z.enum(["microphone", "computerAudio"]);
 
+/** Mirrors `ProviderId`. The one list; everything else refers to this. */
+export const providerIdSchema = z.enum([
+  "gemini",
+  "deepSeek",
+  "groq",
+  "anthropic",
+  "deepgram",
+  "openAiCompatible",
+]);
+
 /** Mirrors `AppInfo`. */
 export const appInfoSchema = z.object({
   appName: z.string().min(1),
@@ -66,7 +76,7 @@ export const transcriptionEngineSchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("cloud"),
-    provider: z.enum(["gemini", "deepSeek", "groq", "anthropic", "openAiCompatible"]),
+    provider: providerIdSchema,
     model: z.string(),
   }),
 ]);
@@ -96,7 +106,7 @@ export const shortcutSettingsSchema = z.object({
 
 /** Mirrors `ProviderConfig`. Holds a credential reference, never a key. */
 export const providerConfigSchema = z.object({
-  id: z.enum(["gemini", "deepSeek", "groq", "anthropic", "openAiCompatible"]),
+  id: providerIdSchema,
   enabled: z.boolean(),
   model: z.string(),
   endpoint: z.string().nullable(),
@@ -113,12 +123,60 @@ export const assistantContextSchema = z.enum([
 
 export const assistantSettingsSchema = z.object({
   enabled: z.boolean(),
-  provider: z.enum(["gemini", "deepSeek", "groq", "anthropic", "openAiCompatible"]),
+  provider: providerIdSchema,
   model: z.string(),
   context: assistantContextSchema,
   notes: z.string(),
   answerOwnQuestions: z.boolean(),
 });
+
+/** Mirrors `UpdateChannel`. */
+export const updateChannelSchema = z.enum(["stable", "beta"]);
+
+/** Mirrors `UpdateSettings`. */
+export const updateSettingsSchema = z.object({
+  channel: updateChannelSchema,
+  checkOnStartup: z.boolean(),
+});
+
+/** Mirrors `ReleaseInfo`. */
+export const releaseInfoSchema = z.object({
+  version: z.string(),
+  tag: z.string(),
+  notes: z.string(),
+  url: z.string(),
+  prerelease: z.boolean(),
+  publishedAt: z.string().nullable(),
+  manifestUrl: z.string().nullable(),
+});
+
+/** Carried on `audis://update/progress` while a new version downloads. */
+export const updateProgressEventSchema = z.object({
+  downloaded: z.number().nonnegative(),
+  total: z.number().nonnegative().nullable(),
+});
+
+/** Mirrors `UpdateCheck`, also carried on `audis://update/status`. */
+export const updateCheckSchema = z.object({
+  currentVersion: z.string(),
+  update: releaseInfoSchema.nullable(),
+  channel: updateChannelSchema,
+});
+export type UpdateChannel = z.infer<typeof updateChannelSchema>;
+export type UpdateSettings = z.infer<typeof updateSettingsSchema>;
+export type ReleaseInfo = z.infer<typeof releaseInfoSchema>;
+export type UpdateCheck = z.infer<typeof updateCheckSchema>;
+
+/** Carried on `audis://assistant/status`. */
+export const assistantStatusEventSchema = z.object({ thinking: z.boolean() });
+
+/** Carried on `audis://assistant/response`. */
+export const assistantResponseEventSchema = z.object({
+  id: z.string(),
+  question: z.string(),
+  answer: z.string(),
+});
+export type AssistantResponseEvent = z.infer<typeof assistantResponseEventSchema>;
 
 /** Every field of Rust's `Settings` must appear here. */
 export const settingsSchema = z.object({
@@ -129,6 +187,7 @@ export const settingsSchema = z.object({
   captions: captionSettingsSchema,
   shortcuts: shortcutSettingsSchema,
   assistant: assistantSettingsSchema,
+  updates: updateSettingsSchema,
   providers: z.array(providerConfigSchema),
 });
 
@@ -278,22 +337,22 @@ export const modelProgressSchema = z.object({
 });
 
 /** Mirrors `ProviderId`. */
-export const providerIdSchema = z.enum([
-  "gemini",
-  "deepSeek",
-  "groq",
-  "anthropic",
-  "openAiCompatible",
-]);
-
 /** Mirrors `ProviderInfo`. */
 /** Mirrors `SpeechSupport`. Absent when a provider cannot transcribe at all. */
 export const speechSupportSchema = z.object({
-  api: z.enum(["openAiTranscriptions", "geminiInline"]),
+  api: z.enum(["openAiTranscriptions", "geminiInline", "deepgramListen"]),
   baseUrl: z.string().nullable(),
   defaultModel: z.string(),
   models: z.array(z.string()),
   summary: z.string(),
+});
+
+/** Mirrors `ChatSupport`. Absent when a provider cannot converse at all. */
+export const chatSupportSchema = z.object({
+  api: z.enum(["openAiChat", "geminiGenerate", "anthropicMessages"]),
+  baseUrl: z.string().nullable(),
+  defaultModel: z.string(),
+  models: z.array(z.string()),
 });
 
 export const providerInfoSchema = z.object({
@@ -306,6 +365,7 @@ export const providerInfoSchema = z.object({
   models: z.array(z.string()),
   needsEndpoint: z.boolean(),
   speech: speechSupportSchema.nullable(),
+  chat: chatSupportSchema.nullable(),
 });
 
 /** Mirrors `ProviderStatus`. */

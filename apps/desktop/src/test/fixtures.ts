@@ -128,6 +128,12 @@ export const AUDIS_PROVIDERS_MOCK: ProviderStatus[] = [
         models: ["gemini-2.0-flash"],
         summary: "Free tier. Good at Indonesian.",
       },
+      chat: {
+        api: "geminiGenerate",
+        baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+        defaultModel: "gemini-2.0-flash",
+        models: ["gemini-2.0-flash"],
+      },
     },
     hasKey: false,
     enabled: false,

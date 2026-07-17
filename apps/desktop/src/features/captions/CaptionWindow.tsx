@@ -3,8 +3,15 @@ import { useEffect, useState } from "react";
 import { useOverlayMenu, type OverlayMenuItem } from "@/components/OverlayMenu";
 import { useSession } from "@/hooks/useSession";
 import { AUDIS_EVENTS, subscribe } from "@/services/events";
-import { getSettings, hideOverlay, openMainWindow } from "@/services/ipc";
 import {
+  getSettings,
+  hideOverlay,
+  openMainWindow,
+  resetCaptionPosition,
+  setCaptionClickThrough,
+} from "@/services/ipc";
+import {
+  diagnosticWarningSchema,
   settingsSchema,
   transcriptSegmentSchema,
   type CaptionSettings,
@@ -17,8 +24,13 @@ export function CaptionWindow() {
   /// The sentence being spoken right now, before it is finished and replaced.
   const [partial, setPartial] = useState<TranscriptSegment>();
   const [captions, setCaptions] = useState<CaptionSettings>();
+  const [hovered, setHovered] = useState(false);
+  /// Why no captions are appearing, when something is wrong.
+  const [problem, setProblem] = useState<string>();
   const { session, stop, setPaused } = useSession();
   const paused = session?.state === "paused";
+
+  const clickThrough = captions?.clickThrough ?? false;
 
   const menuItems: OverlayMenuItem[] = [
     {
@@ -28,9 +40,19 @@ export function CaptionWindow() {
     },
     { id: "open", label: "Open Audis", onSelect: () => void openMainWindow() },
     {
+      id: "click-through",
+      label: clickThrough ? "Make captions clickable" : "Let clicks pass through",
+      separatorBefore: true,
+      onSelect: () => void setCaptionClickThrough(!clickThrough),
+    },
+    {
+      id: "recenter",
+      label: "Recentre captions",
+      onSelect: () => void resetCaptionPosition(),
+    },
+    {
       id: "hide",
       label: "Hide captions",
-      separatorBefore: true,
       onSelect: () => void hideOverlay("captions"),
     },
     {
@@ -58,7 +80,7 @@ export function CaptionWindow() {
     });
   }, []);
 
-  const maxLines = captions?.maxLines ?? 3;
+  const maxLines = captions?.maxLines ?? 2;
 
   useEffect(() => {
     const stopTranscript = subscribe(AUDIS_EVENTS.transcriptFinal, (payload) => {
@@ -67,6 +89,17 @@ export function CaptionWindow() {
 
       setLines((current) => [...current, parsed.data].slice(-maxLines));
       setPartial(undefined);
+      // Words arrived, so whatever was wrong is over.
+      setProblem(undefined);
+    });
+
+    // Recognition is failing. Without this the captions simply never appear and
+    // there is nothing on screen to say why.
+    const stopWarning = subscribe(AUDIS_EVENTS.diagnosticWarning, (payload) => {
+      const parsed = diagnosticWarningSchema.safeParse(payload);
+      if (parsed.success && parsed.data.kind.startsWith("asr.")) {
+        setProblem(parsed.data.message);
+      }
     });
 
     const stopPartial = subscribe(AUDIS_EVENTS.transcriptPartial, (payload) => {
@@ -77,11 +110,13 @@ export function CaptionWindow() {
     const stopSession = subscribe(AUDIS_EVENTS.sessionState, () => {
       setLines([]);
       setPartial(undefined);
+      setProblem(undefined);
     });
 
     return () => {
       stopTranscript();
       stopPartial();
+      stopWarning();
       stopSession();
     };
   }, [maxLines]);
@@ -90,30 +125,45 @@ export function CaptionWindow() {
 
   const opacity = captions.backgroundOpacity / 100;
   const hasPanel = opacity > 0.01;
+  const showAffordance = hovered && !clickThrough;
 
   const visible = [...lines, ...(partial ? [partial] : [])].slice(-maxLines);
+  const showing = visible.length > 0 || problem !== undefined;
 
   return (
     <div
-      data-tauri-drag-region
       className="flex h-screen w-screen items-end justify-center p-4"
       onContextMenu={onContextMenu}
     >
       <div
         data-tauri-drag-region
-        className="flex w-full flex-col gap-2 transition-opacity"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        className="relative flex w-fit max-w-full flex-col gap-1.5"
         style={{
-          maxWidth: "min(100%, 1100px)",
-          padding: hasPanel ? "18px 24px" : "4px 8px",
-          borderRadius: 18,
+          padding: hasPanel ? "10px 16px" : "4px 8px",
+          borderRadius: 16,
+          cursor: clickThrough ? "default" : "grab",
           background: hasPanel ? `rgba(14, 15, 17, ${opacity})` : "transparent",
-          backdropFilter: hasPanel ? "blur(20px) saturate(140%)" : undefined,
-          border: hasPanel ? `1px solid rgba(255, 255, 255, ${0.1 * opacity})` : undefined,
-          boxShadow: hasPanel ? "0 8px 40px rgba(0, 0, 0, 0.45)" : undefined,
-          opacity: visible.length > 0 ? 1 : 0,
-          transitionDuration: "180ms",
+          backdropFilter: hasPanel
+            ? `blur(${Math.round(opacity * 22)}px) saturate(140%)`
+            : undefined,
+          border: showAffordance
+            ? "1px solid rgba(255, 255, 255, 0.35)"
+            : hasPanel
+              ? `1px solid rgba(255, 255, 255, ${0.1 * opacity})`
+              : "1px solid transparent",
+          boxShadow: showAffordance
+            ? "0 10px 44px rgba(0, 0, 0, 0.5), 0 0 0 3px rgba(120, 170, 255, 0.28)"
+            : hasPanel
+              ? `0 8px 40px rgba(0, 0, 0, ${0.45 * opacity})`
+              : undefined,
+          opacity: showing ? 1 : 0,
+          transition: "border-color 140ms ease, box-shadow 140ms ease, opacity 180ms ease",
         }}
       >
+        <DragHandle visible={showAffordance} />
+        {problem ? <Problem message={problem} /> : null}
         {visible.map((line, index) => (
           <CaptionLine
             key={line.isFinal ? line.id : `interim-${line.source}`}
@@ -127,6 +177,41 @@ export function CaptionWindow() {
 
       {menu}
     </div>
+  );
+}
+
+/** Why the captions stopped, said plainly and in their place. */
+function Problem({ message }: { message: string }) {
+  return (
+    <p
+      data-selectable
+      className="flex max-w-[560px] items-start gap-2 text-footnote leading-[1.4]"
+      style={{ color: "#ffd7d7" }}
+    >
+      <span aria-hidden style={{ opacity: 0.9 }}>
+        ⚠
+      </span>
+      <span>{message}</span>
+    </p>
+  );
+}
+
+/** A small grab handle that fades in when the captions are hovered. */
+function DragHandle({ visible }: { visible: boolean }) {
+  return (
+    <span
+      aria-hidden
+      data-tauri-drag-region
+      className="pointer-events-none absolute left-1/2 top-1 -translate-x-1/2"
+      style={{
+        width: 30,
+        height: 4,
+        borderRadius: 999,
+        background: "rgba(255, 255, 255, 0.55)",
+        opacity: visible ? 1 : 0,
+        transition: "opacity 140ms ease",
+      }}
+    />
   );
 }
 
@@ -146,7 +231,7 @@ function CaptionLine({
   return (
     <p
       data-tauri-drag-region
-      className="flex items-baseline gap-2.5 leading-[1.35]"
+      className="flex items-baseline gap-2.5 leading-[1.3]"
       style={{
         fontSize: size,
         fontWeight: 600,
@@ -172,7 +257,7 @@ function SourceLabel({ line, size }: { line: TranscriptSegment; size: number }) 
     <span
       className="flex shrink-0 items-center gap-1.5 whitespace-nowrap"
       style={{
-        fontSize: Math.max(11, Math.round(size * 0.42)),
+        fontSize: Math.max(10, Math.round(size * 0.42)),
         fontWeight: 600,
         letterSpacing: "0.04em",
         color: "rgba(255, 255, 255, 0.62)",

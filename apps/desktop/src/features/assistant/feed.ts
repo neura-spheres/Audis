@@ -60,29 +60,23 @@ export function useAssistantFeed(): AssistantEntry[] {
   );
 }
 
-const QUESTION_STARTERS = new Set([
+/**
+ * The 5W1H words, and their Indonesian equivalents.
+ *
+ * Matched anywhere in the line, not just at the front. Speech arrives in chunks
+ * cut on pauses or a time limit, so a question rarely starts one cleanly: "so I
+ * wanted to ask you, what is your" is a question whose first word is "so".
+ */
+const QUESTION_WORDS = new Set([
   "what",
+  "where",
+  "when",
+  "who",
+  "whom",
+  "whose",
   "why",
   "how",
-  "who",
-  "when",
-  "where",
   "which",
-  "whose",
-  "is",
-  "are",
-  "was",
-  "were",
-  "do",
-  "does",
-  "did",
-  "can",
-  "could",
-  "would",
-  "should",
-  "will",
-  "have",
-  "has",
   "apa",
   "apakah",
   "kenapa",
@@ -92,15 +86,68 @@ const QUESTION_STARTERS = new Set([
   "siapa",
   "kapan",
   "dimana",
+  "mana",
   "berapa",
-  "kah",
 ]);
 
-/** A cheap first pass: does this line look like a question worth answering? */
+/** Auxiliaries that open a yes/no question ("can you…", "did they…"). */
+const QUESTION_OPENERS = new Set([
+  "is",
+  "are",
+  "was",
+  "were",
+  "am",
+  "do",
+  "does",
+  "did",
+  "can",
+  "could",
+  "would",
+  "should",
+  "shall",
+  "will",
+  "have",
+  "has",
+  "had",
+  "may",
+  "might",
+  "bisakah",
+  "bolehkah",
+  "sudahkah",
+  "adakah",
+]);
+
+/**
+ * A cheap first pass: could this line be a question worth answering?
+ *
+ * Deliberately generous. It is only a pre-filter to decide what is worth asking
+ * the model about; the model itself is told to reply NONE when a line turns out
+ * not to be a real question, so a false positive costs one request rather than a
+ * wrong answer. Missing a real question, by contrast, is not recoverable.
+ */
 export function looksLikeQuestion(text: string): boolean {
   const trimmed = text.trim().toLowerCase();
   if (trimmed.length < 3) return false;
-  if (trimmed.endsWith("?")) return true;
-  const first = trimmed.split(/\s+/)[0]?.replace(/[^a-z]/g, "") ?? "";
-  return QUESTION_STARTERS.has(first);
+  if (trimmed.includes("?")) return true;
+
+  // Split on anything that is not a letter, so punctuation never hides a word.
+  const words = trimmed.split(/[^\p{L}]+/u).filter(Boolean);
+  if (words.length === 0) return false;
+
+  if (words.some((word) => QUESTION_WORDS.has(word))) return true;
+  // Indonesian turns a statement into a question with a "-kah" suffix.
+  if (words.some((word) => word.length > 3 && word.endsWith("kah"))) return true;
+
+  return QUESTION_OPENERS.has(words[0] ?? "");
+}
+
+/**
+ * Does this line read as a finished sentence?
+ *
+ * A chunk cut by the time limit stops mid-thought and has no closing
+ * punctuation, which is the signal that the rest of the question is still
+ * coming and is worth waiting for.
+ */
+export function looksComplete(text: string): boolean {
+  return /[.!?…]["')\]]*$/.test(text.trim());
 }
