@@ -89,6 +89,11 @@ export const transcriptionSettingsSchema = z.object({
   captureComputerAudio: z.boolean(),
 });
 
+export const speakerSettingsSchema = z.object({
+  enabled: z.boolean(),
+  expectedSpeakers: z.number().int().nonnegative(),
+});
+
 export const captionSettingsSchema = z.object({
   fontSize: z.number().int().positive(),
   maxLines: z.number().int().positive(),
@@ -184,6 +189,7 @@ export const settingsSchema = z.object({
   general: generalSettingsSchema,
   audio: audioSettingsSchema,
   transcription: transcriptionSettingsSchema,
+  speakers: speakerSettingsSchema,
   captions: captionSettingsSchema,
   shortcuts: shortcutSettingsSchema,
   assistant: assistantSettingsSchema,
@@ -451,6 +457,15 @@ export const transcriptSegmentSchema = z.object({
   engine: z.string(),
 });
 
+export const speakerUpdateSchema = z.object({
+  sessionId: z.string(),
+  source: audioSourceKindSchema,
+  id: z.string(),
+  label: z.string(),
+  isNew: z.boolean(),
+});
+export type SpeakerUpdate = z.infer<typeof speakerUpdateSchema>;
+
 /** Mirrors `AsrState`. */
 export const asrStateSchema = z.enum([
   "starting",
@@ -504,6 +519,7 @@ export type SpeechSupport = z.infer<typeof speechSupportSchema>;
 export type AudioSettings = z.infer<typeof audioSettingsSchema>;
 export type TranscriptionSettings = z.infer<typeof transcriptionSettingsSchema>;
 export type CaptionSettings = z.infer<typeof captionSettingsSchema>;
+export type SpeakerSettings = z.infer<typeof speakerSettingsSchema>;
 export type ShortcutSettings = z.infer<typeof shortcutSettingsSchema>;
 export type ProviderConfig = z.infer<typeof providerConfigSchema>;
 export type Settings = z.infer<typeof settingsSchema>;

@@ -6,6 +6,7 @@ import { formatWhen } from "@/lib/format";
 import {
   deleteSession,
   exportSession,
+  generateSessionReport,
   getSessionTranscript,
   listSessions,
   AudisIpcError,
@@ -121,6 +122,8 @@ function SessionDetail({
 }) {
   const [segments, setSegments] = useState<TranscriptSegment[]>();
   const [busy, setBusy] = useState(false);
+  const [reporting, setReporting] = useState(false);
+  const [reportSaved, setReportSaved] = useState(false);
 
   useEffect(() => {
     getSessionTranscript(session.id)
@@ -135,6 +138,15 @@ function SessionDetail({
       .finally(() => setBusy(false));
   };
 
+  const doReport = () => {
+    setReporting(true);
+    setReportSaved(false);
+    generateSessionReport(session.id)
+      .then(() => setReportSaved(true))
+      .catch((cause: unknown) => onError(toUserFacing(cause)))
+      .finally(() => setReporting(false));
+  };
+
   const doDelete = () => {
     setBusy(true);
     deleteSession(session.id)
@@ -142,6 +154,8 @@ function SessionDetail({
       .catch((cause: unknown) => onError(toUserFacing(cause)))
       .finally(() => setBusy(false));
   };
+
+  const locked = busy || reporting;
 
   return (
     <div className="flex flex-col gap-4">
@@ -155,19 +169,42 @@ function SessionDetail({
           ‹ All sessions
         </button>
         <div className="flex items-center gap-2">
-          <Button onClick={() => doExport("text")} disabled={busy}>
+          <Button onClick={() => doExport("text")} disabled={locked}>
             Text
           </Button>
-          <Button onClick={() => doExport("markdown")} disabled={busy}>
+          <Button onClick={() => doExport("markdown")} disabled={locked}>
             Markdown
           </Button>
-          <Button onClick={() => doExport("srt")} disabled={busy}>
+          <Button onClick={() => doExport("srt")} disabled={locked}>
             SRT
           </Button>
-          <Button onClick={doDelete} disabled={busy} variant="danger">
+          <Button onClick={doDelete} disabled={locked} variant="danger">
             Delete
           </Button>
         </div>
+      </div>
+
+      <div
+        className="flex items-center justify-between gap-4 p-3.5"
+        style={{
+          background: "var(--surface-content)",
+          borderRadius: "var(--radius-card)",
+          boxShadow: "var(--shadow-card)",
+        }}
+      >
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-subheadline font-semibold">Professional report</span>
+          <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
+            {reporting
+              ? "Generating a structured report from this transcript…"
+              : reportSaved
+                ? "Report saved to your exports folder and opened."
+                : "Summarise this session into a structured report with your AI provider, saved as Markdown."}
+          </span>
+        </div>
+        <Button onClick={doReport} disabled={locked} variant="accent" ariaLabel="Generate report">
+          {reporting ? "Generating…" : "Generate report"}
+        </Button>
       </div>
 
       <div className="flex flex-col gap-0.5 px-1">

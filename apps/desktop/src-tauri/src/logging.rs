@@ -38,7 +38,7 @@ pub fn init(paths: &AppPaths) {
     let launch_id = uuid::Uuid::new_v4();
     tracing::info!(
         launch_id = %launch_id,
-        version = env!("CARGO_PKG_VERSION"),
+        version = crate::APP_VERSION,
         data_dir = %paths.root().display(),
         "Audis starting"
     );

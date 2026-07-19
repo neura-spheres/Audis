@@ -24,7 +24,7 @@ pub fn get_app_info(state: State<'_, AppState>) -> Result<AppInfo> {
         company: identity::COMPANY.to_owned(),
         publisher: identity::PUBLISHER.to_owned(),
         tagline: identity::TAGLINE.to_owned(),
-        version: env!("CARGO_PKG_VERSION").to_owned(),
+        version: crate::APP_VERSION.to_owned(),
         bundle_id: identity::BUNDLE_ID.to_owned(),
         data_dir: state.paths.root().display().to_string(),
     })
@@ -106,7 +106,7 @@ pub fn set_caption_click_through(
 #[tauri::command]
 pub async fn check_for_updates(app: tauri::AppHandle) -> Result<crate::updates::UpdateCheck> {
     let channel = app.state::<AppState>().settings.get().updates.channel;
-    let result = crate::updates::check(channel, env!("CARGO_PKG_VERSION")).await?;
+    let result = crate::updates::check(channel, crate::APP_VERSION).await?;
 
     app.emit(audis_common::events::UPDATE_STATUS, &result).ok();
 
@@ -121,7 +121,7 @@ pub async fn check_for_updates(app: tauri::AppHandle) -> Result<crate::updates::
 #[tauri::command]
 pub async fn install_update(app: tauri::AppHandle) -> Result<()> {
     let channel = app.state::<AppState>().settings.get().updates.channel;
-    let found = crate::updates::check(channel, env!("CARGO_PKG_VERSION")).await?;
+    let found = crate::updates::check(channel, crate::APP_VERSION).await?;
 
     let Some(release) = found.update else {
         tracing::info!("nothing to install: already up to date");
@@ -244,7 +244,7 @@ pub fn get_diagnostics(state: State<'_, AppState>) -> Result<Diagnostics> {
     });
 
     Ok(Diagnostics {
-        app_version: env!("CARGO_PKG_VERSION").to_owned(),
+        app_version: crate::APP_VERSION.to_owned(),
         os: format!("{} {}", std::env::consts::OS, os_version()),
         arch: std::env::consts::ARCH.to_owned(),
         webview_version: tauri::webview_version().ok(),
@@ -520,7 +520,7 @@ mod tests {
             company: identity::COMPANY.to_owned(),
             publisher: identity::PUBLISHER.to_owned(),
             tagline: identity::TAGLINE.to_owned(),
-            version: env!("CARGO_PKG_VERSION").to_owned(),
+            version: crate::APP_VERSION.to_owned(),
             bundle_id: identity::BUNDLE_ID.to_owned(),
             data_dir: AppPaths::rooted_at(r"C:\data\Audis")
                 .root()
@@ -573,6 +573,20 @@ mod tests {
         assert!(json.get("webviewVersion").is_some());
         assert!(json.get("storageBytes").is_some());
     }
+
+    #[test]
+    fn app_version_is_sourced_from_config_yaml() {
+        let config = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config.yaml");
+        let content = std::fs::read_to_string(&config).expect("read config.yaml");
+        let version = content
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("version:"))
+            .map(|value| value.trim().trim_matches('"').trim().to_owned())
+            .expect("config.yaml has a version");
+
+        assert!(!version.is_empty());
+        assert_eq!(crate::APP_VERSION, version);
+    }
 }
 
 /// Start a live session for `feature`.
@@ -587,11 +601,13 @@ pub fn start_session(
     let settings = state.settings.get();
 
     let engine = build_engine(&state, &models, &settings)?;
+    let diarize = build_diarizer(&settings);
 
     session.start(
         &app,
         crate::session::SessionRequest {
             engine,
+            diarize,
             paths: state.paths.clone(),
             mode: feature,
             language: settings.transcription.language,
@@ -649,6 +665,20 @@ fn build_engine(
             Ok(Box::new(engine))
         }
     }
+}
+
+fn build_diarizer(settings: &Settings) -> Option<audis_asr::Diarizer> {
+    if !settings.speakers.enabled || !settings.transcription.capture_computer_audio {
+        return None;
+    }
+
+    let mut config = audis_asr::DiarizeConfig::default();
+    if settings.speakers.expected_speakers > 0 {
+        config.max_speakers = (settings.speakers.expected_speakers as usize).clamp(1, 12);
+    }
+
+    tracing::info!(max_speakers = config.max_speakers, "speaker separation on");
+    Some(audis_asr::Diarizer::new(config))
 }
 
 /// Carry an ASR failure out through a command.
@@ -970,9 +1000,14 @@ fn assistant_system_prompt(context: audis_common::AssistantContext, notes: &str)
     };
 
     let mut prompt = format!(
-        "{role}\n\nYou are given the recent transcript of the session. Answer the latest question \
-         in at most three sentences. If the latest line is not actually a question that needs an \
-         answer, reply with exactly: NONE"
+        "{role}\n\nYou are given a running summary of the session, the recent transcript with \
+         speaker labels, and the latest lines. Use the whole context to work out what is really \
+         being asked: the question may be split across several lines, cut off mid-sentence, or lean \
+         on earlier context and pronouns, so reconstruct the complete intended question before you \
+         answer, and resolve any references from the surrounding lines. Then answer it directly and \
+         precisely in at most three sentences, using concrete specifics from the context where they \
+         help. If the latest line is small talk, a greeting, an acknowledgement, or otherwise not a \
+         question that needs answering, reply with exactly: NONE"
     );
 
     if !notes.trim().is_empty() {
@@ -982,6 +1017,134 @@ fn assistant_system_prompt(context: audis_common::AssistantContext, notes: &str)
         ));
     }
 
+    prompt
+}
+
+const REPORT_MAX_CHARS: usize = 48_000;
+
+#[tauri::command]
+pub async fn generate_session_report(app: tauri::AppHandle, id: uuid::Uuid) -> Result<String> {
+    let paths = app.state::<AppState>().paths.clone();
+    let segments = crate::transcript_store::read_segments(&paths, id)?;
+    if segments.is_empty() {
+        return Err(audis_common::AudisError::InvalidArgument {
+            field: "id".to_owned(),
+            detail: "this session has no transcript to report on".to_owned(),
+        });
+    }
+
+    let connection = assistant_connection(&app)?;
+    let (context, notes) = {
+        let assistant = app.state::<AppState>().settings.get().assistant;
+        (assistant.context, assistant.notes)
+    };
+    let summary = crate::transcript_store::session_summary(&paths, id);
+
+    let transcript = clip_transcript(
+        &crate::transcript_store::plain_transcript(&segments),
+        REPORT_MAX_CHARS,
+    );
+
+    let system = report_system_prompt(context);
+    let user = report_user_prompt(summary.as_ref(), &notes, &transcript);
+
+    let AssistantConnection {
+        provider,
+        model,
+        endpoint,
+        key,
+    } = connection;
+
+    tracing::info!(%id, ?provider, %model, "generating session report");
+
+    let report = tauri::async_runtime::spawn_blocking(move || {
+        audis_asr::chat(provider, endpoint, key, &model, &system, &user)
+    })
+    .await
+    .map_err(|error| audis_common::AudisError::Configuration {
+        detail: format!("the report request could not run: {error}"),
+    })?
+    .map_err(as_configuration)?;
+
+    let report = report.trim();
+    if report.is_empty() {
+        return Err(audis_common::AudisError::Configuration {
+            detail: "the assistant returned an empty report".to_owned(),
+        });
+    }
+
+    let path = crate::transcript_store::write_report(&paths, id, report)?;
+    app.opener().reveal_item_in_dir(&path).ok();
+    Ok(path.display().to_string())
+}
+
+fn clip_transcript(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    let head: String = text.chars().take(max / 2).collect();
+    let tail: Vec<char> = text.chars().rev().take(max / 2).collect();
+    let tail: String = tail.into_iter().rev().collect();
+    format!("{head}\n\n[… transcript trimmed for length …]\n\n{tail}")
+}
+
+fn report_system_prompt(context: audis_common::AssistantContext) -> String {
+    use audis_common::AssistantContext::*;
+
+    let kind = match context {
+        General => "conversation",
+        Meeting => "meeting",
+        Interview => "interview",
+        Quiz => "quiz or test",
+        Lecture => "lecture",
+    };
+
+    format!(
+        "You are an expert analyst who writes clear, accurate, professional reports from {kind} \
+         transcripts. You write polished GitHub-flavoured Markdown, stay faithful to what the \
+         transcript actually says, never invent facts, and mark anything uncertain as such. \
+         Speakers are labelled (for example \"You\", \"Person 1\"); attribute points to them where \
+         it matters."
+    )
+}
+
+fn report_user_prompt(
+    summary: Option<&crate::transcript_store::SessionSummary>,
+    notes: &str,
+    transcript: &str,
+) -> String {
+    let mut prompt = String::new();
+
+    if !notes.trim().is_empty() {
+        prompt.push_str(&format!(
+            "Context notes about this session:\n{}\n\n",
+            notes.trim()
+        ));
+    }
+
+    if let Some(summary) = summary {
+        prompt.push_str(&format!(
+            "Session details:\nType: {:?}\nStarted: {}\nLanguage: {:?}\n\n",
+            summary.mode, summary.started_at, summary.language
+        ));
+    }
+
+    prompt.push_str(
+        "Write a professional report of this session in Markdown, using these sections and omitting \
+         any that do not apply:\n\
+         1. A short descriptive title as an H1 heading.\n\
+         2. Overview: a two to four sentence executive summary.\n\
+         3. Key Points: the main topics and facts discussed, as bullets.\n\
+         4. Decisions: decisions or conclusions reached.\n\
+         5. Action Items: concrete tasks, each with an owner and any deadline stated in the \
+         transcript.\n\
+         6. Open Questions: anything raised but left unresolved.\n\
+         7. Notable Quotes: at most three short, verbatim, attributed quotes, only if any stand \
+         out.\n\n\
+         Be concise and specific, use the speaker labels for attribution, and include nothing that \
+         is not supported by the transcript.\n\nTranscript:\n",
+    );
+    prompt.push_str(transcript);
     prompt
 }
 

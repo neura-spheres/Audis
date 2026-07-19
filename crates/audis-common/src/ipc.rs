@@ -36,6 +36,9 @@ pub mod events {
     /// Streamed AI assistant output.
     pub const ASSISTANT_RESPONSE: &str = "audis://assistant/response";
 
+    /// Answer the latest line now, from the global shortcut.
+    pub const ASSISTANT_ASK: &str = "audis://assistant/ask";
+
     /// Rolling meeting intelligence changed.
     pub const MEETING_UPDATE: &str = "audis://meeting/update";
 
@@ -66,6 +69,7 @@ pub mod events {
         SPEAKER_UPDATE,
         ASSISTANT_STATUS,
         ASSISTANT_RESPONSE,
+        ASSISTANT_ASK,
         MEETING_UPDATE,
         UPDATE_STATUS,
         UPDATE_PROGRESS,

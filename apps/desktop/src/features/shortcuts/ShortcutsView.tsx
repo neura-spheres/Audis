@@ -14,7 +14,7 @@ const SHORTCUTS: { key: ShortcutKey; label: string; help: string }[] = [
   {
     key: "askAssistant",
     label: "Ask the assistant",
-    help: "Reserved for the AI assistant, which is not built yet.",
+    help: "Answer the latest line now, during a session with the assistant on.",
   },
 ];
 

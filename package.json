@@ -1,6 +1,6 @@
 {
   "name": "audis-desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Audis by Neura Audis. Windows audio intelligence. Hear more. Understand faster.",
   "packageManager": "pnpm@10.30.3",

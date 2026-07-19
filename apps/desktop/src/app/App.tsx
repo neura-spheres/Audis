@@ -21,7 +21,7 @@ import { ShortcutsView } from "@/features/shortcuts/ShortcutsView";
 import { AssistantView } from "@/features/assistant/AssistantView";
 import { useStartupUpdateCheck } from "@/features/about/useStartupUpdateCheck";
 import { useAssistantEngine } from "@/features/assistant/useAssistantEngine";
-import { SpeakersView } from "@/features/settings/PlannedViews";
+import { SpeakersView } from "@/features/speakers/SpeakersView";
 
 /** Main window shell: a source list on the left, a titled content pane on the */
 export function App() {

@@ -1,6 +1,9 @@
 # ADR-005: Speaker diarization architecture
 
-**Status:** Accepted. Not yet implemented.
+**Status:** Accepted. Partially implemented: real-time provisional labelling of
+the computer-audio stream is built with a local, offline MFCC-embedding +
+online-clustering diarizer (`crates/audis-asr/src/diarize.rs`). Rename/merge/
+split, saved voice profiles, and post-session reconciliation are not built yet.
 
 ## Context
 

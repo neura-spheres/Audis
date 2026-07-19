@@ -16,7 +16,7 @@ import {
 } from "./feed";
 
 /** Sentences kept before the question for local context. */
-const LINES_BEFORE = 5;
+const LINES_BEFORE = 8;
 
 /** Wait after a line that reads as a finished sentence. */
 const SETTLE_COMPLETE_MS = 900;
@@ -149,7 +149,23 @@ export function useAssistantEngine() {
       current.timer = window.setTimeout(answerPending, wait);
     };
 
-    return subscribe(AUDIS_EVENTS.transcriptFinal, (payload) => {
+    const askNow = () => {
+      if (busy.current || pending.current) return;
+      const lastIndex = transcript.current.length - 1;
+      if (lastIndex < 0) return;
+
+      pending.current = {
+        questionIndex: lastIndex,
+        feedId: addQuestion(transcript.current[lastIndex] ?? ""),
+        timer: 0,
+        deadline: Date.now(),
+      };
+      answerPending();
+    };
+
+    const stopAsk = subscribe(AUDIS_EVENTS.assistantAsk, askNow);
+
+    const stopFinal = subscribe(AUDIS_EVENTS.transcriptFinal, (payload) => {
       const parsed = transcriptSegmentSchema.safeParse(payload);
       if (!parsed.success) return;
       const segment = parsed.data;
@@ -183,5 +199,10 @@ export function useAssistantEngine() {
       };
       scheduleSettle();
     });
+
+    return () => {
+      stopAsk();
+      stopFinal();
+    };
   }, [enabled, running, answerOwn]);
 }

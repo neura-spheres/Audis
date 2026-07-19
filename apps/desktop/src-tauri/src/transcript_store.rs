@@ -206,6 +206,11 @@ pub fn list_summaries(paths: &AppPaths) -> Vec<SessionSummary> {
     sessions
 }
 
+pub fn session_summary(paths: &AppPaths, id: Uuid) -> Option<SessionSummary> {
+    let file = paths.session_dir(id).join("transcript.jsonl");
+    read_summary(&file)
+}
+
 fn read_summary(path: &std::path::Path) -> Option<SessionSummary> {
     let content = std::fs::read_to_string(path).ok()?;
     let mut header = None;
@@ -286,6 +291,27 @@ pub fn export(paths: &AppPaths, id: Uuid, format: ExportFormat) -> Result<std::p
         source,
     })?;
     Ok(path)
+}
+
+pub fn write_report(paths: &AppPaths, id: Uuid, markdown: &str) -> Result<std::path::PathBuf> {
+    let dir = paths.exports_dir();
+    std::fs::create_dir_all(&dir).map_err(|source| AudisError::Io {
+        path: dir.clone(),
+        detail: "could not create the exports folder".to_owned(),
+        source,
+    })?;
+
+    let path = dir.join(format!("session-{id}-report.md"));
+    std::fs::write(&path, markdown).map_err(|source| AudisError::Io {
+        path: path.clone(),
+        detail: "could not write the report".to_owned(),
+        source,
+    })?;
+    Ok(path)
+}
+
+pub fn plain_transcript(segments: &[TranscriptSegment]) -> String {
+    render(segments, ExportFormat::Text)
 }
 
 fn render(segments: &[TranscriptSegment], format: ExportFormat) -> String {

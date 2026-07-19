@@ -29,7 +29,7 @@ pub use providers::{
 };
 pub use session::{SessionMode, SessionState, SessionStatus};
 pub use settings::{
-    AssistantContext, AssistantSettings, AudioSettings, CaptionSettings, Settings,
+    AssistantContext, AssistantSettings, AudioSettings, CaptionSettings, Settings, SpeakerSettings,
     TranscriptionEngine, TranscriptionSettings, UpdateChannel, UpdateSettings,
 };
-pub use transcript::{AsrState, AsrStatus, TranscriptSegment};
+pub use transcript::{AsrState, AsrStatus, SpeakerUpdate, TranscriptSegment};

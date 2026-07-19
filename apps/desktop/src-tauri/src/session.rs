@@ -5,10 +5,12 @@ use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use audis_asr::{AsrEngine, EndpointConfig, EndpointEvent, Endpointer, Resampler, downmix_to_mono};
+use audis_asr::{
+    AsrEngine, Diarizer, EndpointConfig, EndpointEvent, Endpointer, Resampler, downmix_to_mono,
+};
 use audis_common::{
     AsrState, AsrStatus, AudioSourceKind, AudisError, DiagnosticWarning, Language, Result,
-    SessionMode, SessionState, SessionStatus, TranscriptSegment, events,
+    SessionMode, SessionState, SessionStatus, SpeakerUpdate, TranscriptSegment, events,
 };
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
@@ -86,6 +88,7 @@ impl ProblemReporter {
 pub struct SessionRequest {
     /// The engine that will recognise speech, already built and ready.
     pub engine: Box<dyn AsrEngine>,
+    pub diarize: Option<Diarizer>,
     /// Where sessions are stored, when this mode saves one.
     pub paths: audis_common::AppPaths,
     /// Which feature is running.
@@ -145,6 +148,7 @@ impl SessionController {
     pub fn start(&self, app: &AppHandle, request: SessionRequest) -> Result<SessionStatus> {
         let SessionRequest {
             engine,
+            diarize,
             paths,
             mode,
             language,
@@ -222,6 +226,7 @@ impl SessionController {
                 session_id: id,
                 language,
                 engine,
+                diarize,
                 utterances: utterance_rx,
                 partial: Arc::clone(&partial),
                 stop: Arc::clone(&stop),
@@ -627,6 +632,7 @@ struct RecogniserSetup {
     session_id: Uuid,
     language: Language,
     engine: Box<dyn AsrEngine>,
+    diarize: Option<Diarizer>,
     utterances: Receiver<SourcedUtterance>,
     /// Sentence-in-progress offered for an interim caption, if any.
     partial: PartialSlot,
@@ -642,6 +648,7 @@ fn spawn_recogniser(setup: RecogniserSetup) -> std::io::Result<JoinHandle<()>> {
         session_id,
         language,
         mut engine,
+        mut diarize,
         utterances,
         partial,
         stop,
@@ -673,6 +680,7 @@ fn spawn_recogniser(setup: RecogniserSetup) -> std::io::Result<JoinHandle<()>> {
                             language,
                             source,
                             &utterance,
+                            diarize.as_mut(),
                             writer.as_mut(),
                             &mut problems,
                         );
@@ -707,6 +715,7 @@ fn spawn_recogniser(setup: RecogniserSetup) -> std::io::Result<JoinHandle<()>> {
                         language,
                         source,
                         &utterance,
+                        diarize.as_mut(),
                         writer.as_mut(),
                         &mut problems,
                     ),
@@ -741,6 +750,7 @@ fn decode_final(
     language: Language,
     source: AudioSourceKind,
     utterance: &audis_asr::Utterance,
+    diarize: Option<&mut Diarizer>,
     writer: Option<&mut crate::transcript_store::SessionWriter>,
     problems: &mut ProblemReporter,
 ) {
@@ -765,7 +775,7 @@ fn decode_final(
 
     problems.clear();
 
-    let segment = TranscriptSegment {
+    let mut segment = TranscriptSegment {
         id: Uuid::new_v4(),
         session_id,
         source,
@@ -784,6 +794,27 @@ fn decode_final(
         tracing::trace!(text = %segment.text, "hallucination text");
         emit_asr_status(app, source, AsrState::Listening, engine_id, None);
         return;
+    }
+
+    if source == AudioSourceKind::ComputerAudio
+        && let Some(diarizer) = diarize
+        && let Some(assignment) = diarizer.identify(&utterance.samples)
+    {
+        let label = audis_asr::speaker_label(assignment.index);
+        if assignment.is_new {
+            app.emit(
+                events::SPEAKER_UPDATE,
+                SpeakerUpdate {
+                    session_id,
+                    source,
+                    id: audis_asr::speaker_id(assignment.index),
+                    label: label.clone(),
+                    is_new: true,
+                },
+            )
+            .ok();
+        }
+        segment.speaker = Some(label);
     }
 
     tracing::debug!(

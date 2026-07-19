@@ -136,6 +136,25 @@ impl Default for TranscriptionSettings {
     }
 }
 
+/// Speaker separation of the computer-audio stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SpeakerSettings {
+    /// Separate the remote speakers.
+    pub enabled: bool,
+    /// Upper bound on distinct speakers; zero lets Audis decide.
+    pub expected_speakers: u32,
+}
+
+impl Default for SpeakerSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            expected_speakers: 0,
+        }
+    }
+}
+
 /// Caption appearance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -289,6 +308,8 @@ pub struct Settings {
     pub audio: AudioSettings,
     /// Speech recognition.
     pub transcription: TranscriptionSettings,
+    /// Speaker separation.
+    pub speakers: SpeakerSettings,
     /// Caption appearance.
     pub captions: CaptionSettings,
     /// Global shortcuts.
@@ -308,6 +329,7 @@ impl Default for Settings {
             general: GeneralSettings::default(),
             audio: AudioSettings::default(),
             transcription: TranscriptionSettings::default(),
+            speakers: SpeakerSettings::default(),
             captions: CaptionSettings::default(),
             shortcuts: ShortcutSettings::default(),
             assistant: AssistantSettings::default(),

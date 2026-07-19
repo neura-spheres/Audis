@@ -24,6 +24,10 @@ describe("settings round-trip", () => {
       captureMicrophone: true,
       captureComputerAudio: false,
     },
+    speakers: {
+      enabled: true,
+      expectedSpeakers: 2,
+    },
     captions: {
       fontSize: 40,
       maxLines: 5,

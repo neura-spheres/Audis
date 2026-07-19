@@ -117,6 +117,50 @@ const QUESTION_OPENERS = new Set([
   "adakah",
 ]);
 
+const REQUEST_VERBS = new Set([
+  "tell",
+  "explain",
+  "describe",
+  "define",
+  "compare",
+  "list",
+  "summarize",
+  "summarise",
+  "walk",
+  "give",
+  "share",
+  "elaborate",
+  "clarify",
+  "name",
+  "outline",
+  "suggest",
+  "recommend",
+  "jelaskan",
+  "sebutkan",
+  "ceritakan",
+  "bandingkan",
+  "uraikan",
+  "terangkan",
+]);
+
+const REQUEST_PHRASES = [
+  "tell me",
+  "let me know",
+  "walk me through",
+  "i wanted to ask",
+  "i want to ask",
+  "my question is",
+  "do you know",
+  "any thoughts",
+  "what about",
+  "how about",
+  "your thoughts on",
+  "your take on",
+];
+
+const TAG_ENDINGS =
+  /\b(right|correct|isn't it|aren't they|don't you|wouldn't you|betul|kan)\s*[?.!]*$/;
+
 /**
  * A cheap first pass: could this line be a question worth answering?
  *
@@ -129,16 +173,19 @@ export function looksLikeQuestion(text: string): boolean {
   const trimmed = text.trim().toLowerCase();
   if (trimmed.length < 3) return false;
   if (trimmed.includes("?")) return true;
+  if (TAG_ENDINGS.test(trimmed)) return true;
+  if (REQUEST_PHRASES.some((phrase) => trimmed.includes(phrase))) return true;
 
-  // Split on anything that is not a letter, so punctuation never hides a word.
   const words = trimmed.split(/[^\p{L}]+/u).filter(Boolean);
   if (words.length === 0) return false;
 
   if (words.some((word) => QUESTION_WORDS.has(word))) return true;
-  // Indonesian turns a statement into a question with a "-kah" suffix.
   if (words.some((word) => word.length > 3 && word.endsWith("kah"))) return true;
 
-  return QUESTION_OPENERS.has(words[0] ?? "");
+  const opener = words[0] ?? "";
+  const secondary = words[1] ?? "";
+  if (QUESTION_OPENERS.has(opener)) return true;
+  return REQUEST_VERBS.has(opener) || REQUEST_VERBS.has(secondary);
 }
 
 /**

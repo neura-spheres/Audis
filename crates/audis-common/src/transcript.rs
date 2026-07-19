@@ -52,6 +52,22 @@ impl TranscriptSegment {
     }
 }
 
+/// A speaker becoming known, carried on `audis://speaker/update`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeakerUpdate {
+    /// The session this speaker belongs to.
+    pub session_id: Uuid,
+    /// Which stream the speaker was heard on.
+    pub source: AudioSourceKind,
+    /// Stable machine id, such as `person-1`.
+    pub id: String,
+    /// Provisional display label, such as `Person 1`.
+    pub label: String,
+    /// True the first time this speaker is heard.
+    pub is_new: bool,
+}
+
 /// Health of a recognition stream, carried on `audis://asr/status`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

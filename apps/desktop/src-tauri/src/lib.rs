@@ -20,6 +20,11 @@ use tauri::{Manager, WindowEvent};
 use commands::AppState;
 use settings_store::SettingsStore;
 
+pub const APP_VERSION: &str = match option_env!("AUDIS_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
 /// Refuse to open a window that could only show a browser error page.
 fn exit_if_the_ui_cannot_load(app: &tauri::AppHandle) {
     if !tauri::is_dev() {
@@ -146,6 +151,7 @@ pub fn run() {
             commands::get_session_transcript,
             commands::delete_session,
             commands::export_session,
+            commands::generate_session_report,
             commands::close_main_window,
             commands::hide_overlay,
             commands::open_main_window,

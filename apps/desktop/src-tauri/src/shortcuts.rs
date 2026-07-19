@@ -2,7 +2,7 @@
 
 use std::str::FromStr;
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 use crate::commands::AppState;
@@ -14,6 +14,7 @@ enum Action {
     Stop,
     TogglePause,
     ToggleCaptions,
+    AskAssistant,
 }
 
 /// Register the shortcuts from settings, replacing any already registered.
@@ -25,6 +26,7 @@ pub fn apply(app: &AppHandle) {
     register(app, shortcuts.stop_session, Action::Stop);
     register(app, shortcuts.toggle_pause, Action::TogglePause);
     register(app, shortcuts.toggle_captions, Action::ToggleCaptions);
+    register(app, shortcuts.ask_assistant, Action::AskAssistant);
 }
 
 fn register(app: &AppHandle, accelerator: Option<String>, action: Action) {
@@ -72,6 +74,17 @@ fn run(app: &AppHandle, action: Action) {
             if session.status().is_some() {
                 overlays::toggle(app, Overlay::Captions);
             }
+        }
+        Action::AskAssistant => {
+            if session.status().is_none() {
+                return;
+            }
+            if !app.state::<AppState>().settings.get().assistant.enabled {
+                return;
+            }
+
+            overlays::place(app, Overlay::Assistant);
+            app.emit(audis_common::events::ASSISTANT_ASK, ()).ok();
         }
     }
 }

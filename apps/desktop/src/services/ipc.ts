@@ -301,3 +301,7 @@ export function deleteSession(id: string): Promise<void> {
 export function exportSession(id: string, format: ExportFormat): Promise<string> {
   return callCommand("export_session", z.string(), { id, format });
 }
+
+export function generateSessionReport(id: string): Promise<string> {
+  return callCommand("generate_session_report", z.string(), { id });
+}

@@ -12,6 +12,7 @@ export const AUDIS_EVENTS = {
   speakerUpdate: "audis://speaker/update",
   assistantStatus: "audis://assistant/status",
   assistantResponse: "audis://assistant/response",
+  assistantAsk: "audis://assistant/ask",
   meetingUpdate: "audis://meeting/update",
   updateStatus: "audis://update/status",
   updateProgress: "audis://update/progress",

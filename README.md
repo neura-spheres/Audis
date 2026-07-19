@@ -12,10 +12,12 @@ audio kept as separate sources.
 
 ---
 
-> **Early development.** The foundation is in place: workspace, desktop shell,
-> typed IPC, logging, CI. Audio capture, transcription and the AI assistant are
-> not built yet. The UI deliberately exposes only what actually works, so there
-> are no placeholder buttons.
+> **Early development.** Audio capture, streaming transcription (local Whisper
+> and cloud engines), live captions, the AI assistant, and provisional local
+> speaker separation are working. Installer signing, licensing, and the richer
+> speaker tools (rename/merge/split, saved voice profiles, post-session
+> reconciliation) are not built yet. The UI deliberately exposes only what
+> actually works, so there are no placeholder buttons.
 
 ## What Audis does
 
