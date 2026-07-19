@@ -21,6 +21,9 @@ const FRAME_QUEUE_DEPTH: usize = 64;
 /// How many utterances may wait to be recognised.
 const UTTERANCE_QUEUE_DEPTH: usize = 32;
 
+/// How many frame blocks may wait for the recorder before one is dropped.
+const RECORD_QUEUE_DEPTH: usize = 256;
+
 /// How often an in-progress sentence is offered for an interim caption.
 const PARTIAL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(400);
 
@@ -105,6 +108,8 @@ pub struct SessionRequest {
     pub want_computer_audio: bool,
     /// Show the assistant panel, because the assistant is on.
     pub assistant_enabled: bool,
+    /// Save each source's audio to the recordings folder as Opus.
+    pub record: bool,
 }
 
 /// One utterance, tagged with where it came from.
@@ -115,6 +120,14 @@ struct SourcedUtterance {
 
 /// The newest sentence-in-progress waiting for an interim decode.
 type PartialSlot = Arc<Mutex<Option<SourcedUtterance>>>;
+
+/// A started source: its capture, its prepare thread, and its recorder thread
+/// when recording is on.
+type SourceHandles = (
+    audis_audio::CaptureHandle,
+    JoinHandle<()>,
+    Option<JoinHandle<()>>,
+);
 
 /// Everything a running session owns.
 struct Running {
@@ -157,6 +170,7 @@ impl SessionController {
             want_microphone,
             want_computer_audio,
             assistant_enabled,
+            record,
         } = request;
 
         let mut guard = self.lock();
@@ -240,6 +254,14 @@ impl SessionController {
         let mut started_microphone = false;
         let mut started_computer_audio = false;
 
+        let record_path = |source: AudioSourceKind| {
+            record.then(|| {
+                paths
+                    .recordings_dir()
+                    .join(format!("session-{id}-{}.ogg", source_slug(source)))
+            })
+        };
+
         if want_microphone {
             match start_source(
                 app,
@@ -251,10 +273,12 @@ impl SessionController {
                 Arc::clone(&paused),
                 endpoint_config,
                 offline,
+                record_path(AudioSourceKind::Microphone),
             ) {
-                Ok((capture, worker)) => {
+                Ok((capture, worker, recorder)) => {
                     captures.push(capture);
                     workers.push(worker);
+                    workers.extend(recorder);
                     started_microphone = true;
                 }
                 Err(error) => {
@@ -275,10 +299,12 @@ impl SessionController {
                 Arc::clone(&paused),
                 endpoint_config,
                 offline,
+                record_path(AudioSourceKind::ComputerAudio),
             ) {
-                Ok((capture, worker)) => {
+                Ok((capture, worker, recorder)) => {
                     captures.push(capture);
                     workers.push(worker);
+                    workers.extend(recorder);
                     started_computer_audio = true;
                 }
                 Err(error) => {
@@ -495,14 +521,28 @@ fn start_source(
     paused: Arc<AtomicBool>,
     endpoint_config: EndpointConfig,
     want_partials: bool,
-) -> std::result::Result<(audis_audio::CaptureHandle, JoinHandle<()>), audis_audio::AudioError> {
+    record_path: Option<std::path::PathBuf>,
+) -> std::result::Result<SourceHandles, audis_audio::AudioError> {
     let (frame_tx, frame_rx) = sync_channel::<Vec<f32>>(FRAME_QUEUE_DEPTH);
     let dropped = Arc::new(AtomicU64::new(0));
 
+    let (record_tx, record_rx) = if record_path.is_some() {
+        let (tx, rx) = sync_channel::<Vec<f32>>(RECORD_QUEUE_DEPTH);
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
+
     let sink_dropped = Arc::clone(&dropped);
+    let sink_paused = Arc::clone(&paused);
     let sink: audis_audio::FrameSink = Arc::new(move |data: &[f32]| {
         if frame_tx.try_send(data.to_vec()).is_err() {
             sink_dropped.fetch_add(1, Ordering::Relaxed);
+        }
+        if let Some(tx) = &record_tx
+            && !sink_paused.load(Ordering::Relaxed)
+        {
+            let _ = tx.try_send(data.to_vec());
         }
     });
 
@@ -532,7 +572,28 @@ fn start_source(
         detail: format!("the audio pipeline thread could not start: {error}"),
     })?;
 
-    Ok((capture, worker))
+    let recorder = match (record_rx, record_path) {
+        (Some(rx), Some(path)) => {
+            match crate::recorder::spawn(path, capture.sample_rate(), capture.channels(), rx) {
+                Ok(handle) => Some(handle),
+                Err(error) => {
+                    tracing::warn!(%error, ?source, "recording could not start");
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+
+    Ok((capture, worker, recorder))
+}
+
+/// A short, filesystem-safe name for a source, used in recording filenames.
+fn source_slug(source: AudioSourceKind) -> &'static str {
+    match source {
+        AudioSourceKind::Microphone => "microphone",
+        AudioSourceKind::ComputerAudio => "computer-audio",
+    }
 }
 
 /// Downmix, resample and endpoint one source's audio.

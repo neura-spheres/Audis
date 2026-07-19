@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { ErrorNotice } from "@/components/ErrorNotice";
-import { Button } from "@/components/controls";
+import { Button, Switch } from "@/components/controls";
 import { CheckIcon } from "@/components/icons";
 import { listFeatures, AudisIpcError } from "@/services/ipc";
 import { useSession } from "@/hooks/useSession";
+import { useSettings } from "@/hooks/useSettings";
 import type { Feature, UserFacingError } from "@/schemas/ipc";
 import type { ViewId } from "@/app/navigation";
 
@@ -36,6 +37,8 @@ export function FeaturesView({ onNavigate }: { onNavigate: (id: ViewId) => void 
         runs.
       </p>
 
+      <RecordingToggle />
+
       <div className="flex flex-col gap-3">
         {(features ?? []).map((feature) => (
           <FeatureCard
@@ -57,6 +60,39 @@ export function FeaturesView({ onNavigate }: { onNavigate: (id: ViewId) => void 
         </p>
       ) : null}
     </div>
+  );
+}
+
+function RecordingToggle() {
+  const { settings, update } = useSettings();
+  if (!settings) return null;
+
+  const enabled = settings.recording.enabled;
+
+  return (
+    <section
+      className="flex items-center justify-between gap-4 p-4"
+      style={{
+        background: "var(--surface-content)",
+        borderRadius: "var(--radius-card)",
+        boxShadow: "var(--shadow-card)",
+      }}
+    >
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="text-body font-semibold">Record session audio</span>
+        <p className="text-footnote" style={{ color: "var(--label-secondary)" }}>
+          While a session runs, save the audio of every source you capture as an Opus (.ogg) file in
+          your recordings folder.
+        </p>
+      </div>
+      <Switch
+        label="Record session audio"
+        checked={enabled}
+        onChange={(next) =>
+          update((current) => ({ ...current, recording: { ...current.recording, enabled: next } }))
+        }
+      />
+    </section>
   );
 }
 

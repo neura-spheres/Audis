@@ -9,6 +9,7 @@ import {
   generateSessionReport,
   getSessionTranscript,
   listSessions,
+  reviseSessionSegment,
   AudisIpcError,
 } from "@/services/ipc";
 import type {
@@ -198,8 +199,8 @@ function SessionDetail({
             {reporting
               ? "Generating a structured report from this transcript…"
               : reportSaved
-                ? "Report saved to your exports folder and opened."
-                : "Summarise this session into a structured report with your AI provider, saved as Markdown."}
+                ? "PDF report saved to your exports folder and opened."
+                : "Summarise this session into a structured, professional PDF report with your AI provider."}
           </span>
         </div>
         <Button onClick={doReport} disabled={locked} variant="accent" ariaLabel="Generate report">
@@ -234,23 +235,115 @@ function SessionDetail({
           </span>
         ) : (
           segments.map((segment) => (
-            <p key={segment.id} className="flex flex-col gap-0.5">
-              <span
-                className="text-caption2 font-medium"
-                style={{ color: sourceColour(segment.source) }}
-              >
-                {segment.speaker ?? (segment.source === "microphone" ? "You" : "Computer Audio")}
-              </span>
-              <span className="text-subheadline" style={{ color: "var(--label-primary)" }}>
-                {segment.text}
-              </span>
-            </p>
+            <SegmentRow
+              key={segment.id}
+              segment={segment}
+              sessionId={session.id}
+              onRevised={(updated) =>
+                setSegments((current) =>
+                  current?.map((item) => (item.id === updated.id ? updated : item)),
+                )
+              }
+              onError={onError}
+            />
           ))
         )}
       </div>
     </div>
   );
 }
+
+function SegmentRow({
+  segment,
+  sessionId,
+  onRevised,
+  onError,
+}: {
+  segment: TranscriptSegment;
+  sessionId: string;
+  onRevised: (updated: TranscriptSegment) => void;
+  onError: (error: UserFacingError) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(segment.text);
+  const [speaker, setSpeaker] = useState(segment.speaker ?? "");
+  const [busy, setBusy] = useState(false);
+
+  const label = segment.speaker ?? (segment.source === "microphone" ? "You" : "Computer Audio");
+
+  const save = () => {
+    if (!text.trim()) return;
+    setBusy(true);
+    reviseSessionSegment(sessionId, segment.id, text.trim(), speaker.trim() || null)
+      .then((updated) => {
+        onRevised(updated);
+        setEditing(false);
+      })
+      .catch((cause: unknown) => onError(toUserFacing(cause)))
+      .finally(() => setBusy(false));
+  };
+
+  const cancel = () => {
+    setText(segment.text);
+    setSpeaker(segment.speaker ?? "");
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="flex flex-col gap-1.5">
+        <input
+          value={speaker}
+          onChange={(event) => setSpeaker(event.target.value)}
+          placeholder="Speaker"
+          className="w-full px-2.5 py-[5px] text-caption2"
+          style={editInputStyle}
+        />
+        <textarea
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          rows={2}
+          className="w-full resize-y px-2.5 py-2 text-subheadline"
+          style={editInputStyle}
+        />
+        <div className="flex gap-2">
+          <Button onClick={save} disabled={busy || !text.trim()} variant="accent">
+            Save
+          </Button>
+          <Button onClick={cancel} disabled={busy}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <p className="flex flex-col gap-0.5">
+      <span className="text-caption2 font-medium" style={{ color: sourceColour(segment.source) }}>
+        {label}
+      </span>
+      <span className="text-subheadline" style={{ color: "var(--label-primary)" }}>
+        {segment.text}
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className="ml-2 align-baseline text-caption2"
+          style={{ color: "var(--color-accent)" }}
+        >
+          Edit
+        </button>
+      </span>
+    </p>
+  );
+}
+
+const editInputStyle = {
+  background: "var(--surface-elevated)",
+  color: "var(--label-primary)",
+  border: "0.5px solid var(--border-control)",
+  borderRadius: "var(--radius-control)",
+} as const;
 
 function modeName(mode: string): string {
   const names: Record<string, string> = {

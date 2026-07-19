@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { GroupedList, Row } from "@/components/GroupedList";
 import { Button, SegmentedControl, Switch } from "@/components/controls";
@@ -244,16 +244,121 @@ function Updates() {
             </p>
           ) : null}
           {result.update.notes ? (
-            <p
+            <div
               data-selectable
-              className="max-h-48 overflow-y-auto whitespace-pre-wrap text-footnote"
+              className="max-h-48 overflow-y-auto text-footnote"
               style={{ color: "var(--label-secondary)" }}
             >
-              {result.update.notes}
-            </p>
+              <ReleaseNotes notes={result.update.notes} />
+            </div>
           ) : null}
         </div>
       ) : null}
     </section>
   );
+}
+
+export function ReleaseNotes({ notes }: { notes: string }) {
+  const lines = notes.replace(/\r\n/g, "\n").split("\n");
+  const blocks: ReactNode[] = [];
+  let list: string[] = [];
+  let key = 0;
+
+  const flushList = () => {
+    if (list.length === 0) return;
+    const items = list;
+    list = [];
+    blocks.push(
+      <ul key={key++} className="flex flex-col gap-1">
+        {items.map((item, index) => (
+          <li key={index} className="flex items-start gap-2">
+            <span aria-hidden className="mt-[2px]" style={{ color: "var(--label-tertiary)" }}>
+              •
+            </span>
+            <span>{renderInline(item)}</span>
+          </li>
+        ))}
+      </ul>,
+    );
+  };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (line === "") {
+      flushList();
+      continue;
+    }
+
+    const bullet = /^[-*]\s+(.*)$/.exec(line);
+    if (bullet) {
+      list.push(bullet[1] ?? "");
+      continue;
+    }
+
+    flushList();
+
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (heading) {
+      blocks.push(
+        <p
+          key={key++}
+          className="font-semibold"
+          style={{
+            color: "var(--label-primary)",
+            marginTop: blocks.length > 0 ? 4 : 0,
+          }}
+        >
+          {renderInline(heading[2] ?? "")}
+        </p>,
+      );
+      continue;
+    }
+
+    blocks.push(
+      <p key={key++} className="leading-[1.45]">
+        {renderInline(line)}
+      </p>,
+    );
+  }
+  flushList();
+
+  return <div className="flex flex-col gap-1.5">{blocks}</div>;
+}
+
+function renderInline(text: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const pattern = /\*\*(.+?)\*\*|`(.+?)`/g;
+  let last = 0;
+  let key = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > last) nodes.push(text.slice(last, match.index));
+    if (match[1] !== undefined) {
+      nodes.push(
+        <strong key={key++} style={{ color: "var(--label-primary)", fontWeight: 600 }}>
+          {match[1]}
+        </strong>,
+      );
+    } else if (match[2] !== undefined) {
+      nodes.push(
+        <code
+          key={key++}
+          style={{
+            fontFamily: "var(--font-mono, monospace)",
+            fontSize: "0.92em",
+            padding: "0 3px",
+            borderRadius: 4,
+            background: "var(--surface-sunken)",
+          }}
+        >
+          {match[2]}
+        </code>,
+      );
+    }
+    last = pattern.lastIndex;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+
+  return nodes;
 }

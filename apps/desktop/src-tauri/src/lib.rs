@@ -1,12 +1,16 @@
 //! Audis application entry point.
 
 mod audio_test;
+mod caption_hit;
 mod commands;
 mod credentials;
 mod data_files;
+mod device_watch;
 mod logging;
 mod model_store;
 mod overlays;
+mod recorder;
+mod report;
 mod session;
 mod settings_store;
 mod shortcuts;
@@ -113,6 +117,7 @@ pub fn run() {
         .manage(audio_test::AudioTestState::default())
         .manage(std::sync::Arc::new(model_store::ModelStore::default()))
         .manage(session::SessionController::default())
+        .manage(caption_hit::CaptionHot::default())
         .invoke_handler(tauri::generate_handler![
             commands::get_app_info,
             commands::get_settings,
@@ -147,11 +152,14 @@ pub fn run() {
             commands::set_assistant_enabled,
             commands::reset_caption_position,
             commands::set_caption_click_through,
+            commands::set_caption_hot_rects,
             commands::list_sessions,
             commands::get_session_transcript,
             commands::delete_session,
             commands::export_session,
+            commands::revise_session_segment,
             commands::generate_session_report,
+            commands::meeting_update,
             commands::close_main_window,
             commands::hide_overlay,
             commands::open_main_window,
@@ -194,6 +202,7 @@ pub fn run() {
             }
 
             shortcuts::apply(app.handle());
+            device_watch::spawn(app.handle().clone());
 
             tracing::info!("Audis ready");
             Ok(())

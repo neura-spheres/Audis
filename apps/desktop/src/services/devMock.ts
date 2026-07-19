@@ -37,6 +37,9 @@ export function installDevIpcMock(): void {
       enabled: true,
       expectedSpeakers: 0,
     },
+    recording: {
+      enabled: false,
+    },
     captions: {
       fontSize: 28,
       maxLines: 3,

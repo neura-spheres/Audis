@@ -4,6 +4,7 @@ import { GroupedList, Row } from "@/components/GroupedList";
 import { ErrorNotice } from "@/components/ErrorNotice";
 import { Button } from "@/components/controls";
 import { useSettings } from "@/hooks/useSettings";
+import { AUDIS_EVENTS, subscribe } from "@/services/events";
 import { LevelMeter } from "./LevelMeter";
 import { useAudioLevels } from "./useAudioLevels";
 import { listAudioDevices, startAudioTest, stopAudioTest, AudisIpcError } from "@/services/ipc";
@@ -23,9 +24,12 @@ export function AudioView() {
   const outId = settings?.audio.computerAudioId ?? null;
 
   useEffect(() => {
-    listAudioDevices()
-      .then(setDevices)
-      .catch((cause: unknown) => setError(toUserFacing(cause)));
+    const load = () =>
+      listAudioDevices()
+        .then(setDevices)
+        .catch((cause: unknown) => setError(toUserFacing(cause)));
+    load();
+    return subscribe(AUDIS_EVENTS.audioDeviceChange, load);
   }, []);
 
   useEffect(() => {

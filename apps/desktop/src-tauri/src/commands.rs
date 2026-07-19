@@ -45,23 +45,12 @@ pub fn update_settings(
 ) -> Result<Settings> {
     let saved = state.settings.set(settings)?;
 
-    apply_caption_click_through(&app, saved.captions.click_through);
-
     app.emit(audis_common::events::SETTINGS_CHANGED, &saved)
         .ok();
 
     crate::shortcuts::apply(&app);
 
     Ok(saved)
-}
-
-/// Let clicks pass through the caption overlay to whatever is behind it.
-pub fn apply_caption_click_through(app: &tauri::AppHandle, click_through: bool) {
-    if let Some(window) = app.get_webview_window("captions")
-        && let Err(error) = window.set_ignore_cursor_events(click_through)
-    {
-        tracing::warn!(%error, "could not change caption click-through");
-    }
 }
 
 /// How far above the bottom of the screen the captions sit, in logical pixels.
@@ -96,9 +85,19 @@ pub fn set_caption_click_through(
     let mut settings = state.settings.get();
     settings.captions.click_through = click_through;
     let saved = state.settings.set(settings)?;
-    apply_caption_click_through(&app, click_through);
     app.emit(audis_common::events::SETTINGS_CHANGED, &saved)
         .ok();
+    Ok(())
+}
+
+/// Report the caption's currently interactive regions, in CSS pixels relative
+/// to its window. The cursor loop uses these to decide click-through.
+#[tauri::command]
+pub fn set_caption_hot_rects(
+    hot: State<'_, crate::caption_hit::CaptionHot>,
+    rects: Vec<crate::caption_hit::HotRect>,
+) -> Result<()> {
+    hot.set_rects(rects);
     Ok(())
 }
 
@@ -587,6 +586,26 @@ mod tests {
         assert!(!version.is_empty());
         assert_eq!(crate::APP_VERSION, version);
     }
+
+    #[test]
+    fn meeting_update_parses_json_or_falls_back_to_prose() {
+        let good = parse_meeting_update(
+            r#"{"summary":"shipped","decisions":["ship 0.1.2"],"actionItems":["Alice: QA"]}"#,
+        );
+        assert_eq!(good.summary, "shipped");
+        assert_eq!(good.decisions, vec!["ship 0.1.2".to_owned()]);
+        assert_eq!(good.action_items, vec!["Alice: QA".to_owned()]);
+
+        let fenced = parse_meeting_update(
+            "```json\n{\"summary\":\"y\",\"decisions\":[],\"actionItems\":[]}\n```",
+        );
+        assert_eq!(fenced.summary, "y");
+
+        let prose = parse_meeting_update("no json here at all");
+        assert_eq!(prose.summary, "no json here at all");
+        assert!(prose.decisions.is_empty());
+        assert!(prose.action_items.is_empty());
+    }
 }
 
 /// Start a live session for `feature`.
@@ -616,6 +635,7 @@ pub fn start_session(
             want_microphone: settings.transcription.capture_microphone,
             want_computer_audio: settings.transcription.capture_computer_audio,
             assistant_enabled: settings.assistant.enabled,
+            record: settings.recording.enabled,
         },
     )
 }
@@ -752,6 +772,27 @@ pub fn export_session(
     let path = crate::transcript_store::export(&state.paths, id, format)?;
     app.opener().reveal_item_in_dir(&path).ok();
     Ok(path.display().to_string())
+}
+
+/// Correct one segment of a saved session and publish the correction.
+#[tauri::command]
+pub fn revise_session_segment(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    session_id: uuid::Uuid,
+    segment_id: uuid::Uuid,
+    text: String,
+    speaker: Option<String>,
+) -> Result<audis_common::TranscriptSegment> {
+    let revision = audis_common::SegmentRevision {
+        id: segment_id,
+        text,
+        speaker,
+    };
+    let updated = crate::transcript_store::revise_segment(&state.paths, session_id, revision)?;
+    app.emit(audis_common::events::TRANSCRIPT_REVISION, &updated)
+        .ok();
+    Ok(updated)
 }
 
 /// Answer a question with the assistant, using the transcript as context.
@@ -953,6 +994,82 @@ pub async fn assistant_summarize(
     Ok(summary.trim().to_owned())
 }
 
+/// Refresh the rolling meeting notes from the transcript so far.
+#[tauri::command]
+pub async fn meeting_update(
+    app: tauri::AppHandle,
+    transcript: Vec<String>,
+    previous: String,
+) -> Result<audis_common::MeetingUpdate> {
+    if transcript.is_empty() {
+        return Ok(audis_common::MeetingUpdate::default());
+    }
+
+    let AssistantConnection {
+        provider,
+        model,
+        endpoint,
+        key,
+    } = assistant_connection(&app)?;
+    let context = app.state::<AppState>().settings.get().assistant.context;
+    let system = meeting_system_prompt(context);
+    let user = format!(
+        "Previous notes as JSON (may be empty):\n{}\n\nTranscript so far (older lines first):\n{}",
+        previous.trim(),
+        transcript.join("\n")
+    );
+
+    tracing::info!(?provider, %model, lines = transcript.len(), "updating meeting notes");
+
+    let raw = tauri::async_runtime::spawn_blocking(move || {
+        audis_asr::chat(provider, endpoint, key, &model, &system, &user)
+    })
+    .await
+    .map_err(|error| audis_common::AudisError::Configuration {
+        detail: format!("the meeting update could not run: {error}"),
+    })?
+    .map_err(as_configuration)?;
+
+    let update = parse_meeting_update(&raw);
+    app.emit(audis_common::events::MEETING_UPDATE, &update).ok();
+    Ok(update)
+}
+
+fn meeting_system_prompt(context: audis_common::AssistantContext) -> String {
+    use audis_common::AssistantContext::*;
+
+    let kind = match context {
+        General => "conversation",
+        Meeting => "meeting",
+        Interview => "interview",
+        Quiz => "quiz or test",
+        Lecture => "lecture",
+    };
+
+    format!(
+        "You keep live notes for a {kind}. Given the previous notes and the transcript so far, \
+         return updated notes as compact JSON with exactly these keys: \"summary\" (a string under \
+         120 words), \"decisions\" (an array of short strings), and \"actionItems\" (an array of \
+         short strings, each naming an owner where one is clear). Keep concrete facts, names, \
+         numbers, decisions and tasks; drop small talk. Output only the JSON object."
+    )
+}
+
+fn parse_meeting_update(raw: &str) -> audis_common::MeetingUpdate {
+    if let (Some(start), Some(end)) = (raw.find('{'), raw.rfind('}'))
+        && end > start
+        && let Ok(update) = serde_json::from_str::<audis_common::MeetingUpdate>(&raw[start..=end])
+    {
+        return update;
+    }
+
+    audis_common::MeetingUpdate {
+        summary: raw.trim().to_owned(),
+        decisions: Vec::new(),
+        action_items: Vec::new(),
+    }
+}
+
 fn assistant_summary_prompt(context: audis_common::AssistantContext) -> String {
     use audis_common::AssistantContext::*;
 
@@ -1073,9 +1190,56 @@ pub async fn generate_session_report(app: tauri::AppHandle, id: uuid::Uuid) -> R
         });
     }
 
-    let path = crate::transcript_store::write_report(&paths, id, report)?;
+    let (title, body) = split_report_title(report);
+    let meta = crate::report::ReportMeta {
+        title,
+        session_type: summary
+            .as_ref()
+            .map(|s| s.mode.describe().0.to_owned())
+            .unwrap_or_else(|| "Session".to_owned()),
+        started_at: summary
+            .as_ref()
+            .map(|s| format_when(&s.started_at))
+            .unwrap_or_default(),
+        language: summary
+            .as_ref()
+            .map(|s| language_name(s.language).to_owned())
+            .unwrap_or_default(),
+        generated_at: chrono::Local::now().format("%d %B %Y, %H:%M").to_string(),
+    };
+    let pdf = crate::report::markdown_to_pdf(&body, &meta);
+
+    let path = crate::transcript_store::write_report(&paths, id, &pdf)?;
     app.opener().reveal_item_in_dir(&path).ok();
     Ok(path.display().to_string())
+}
+
+fn split_report_title(markdown: &str) -> (String, String) {
+    let mut title = String::new();
+    let mut taken = false;
+    let mut body = Vec::new();
+    for line in markdown.lines() {
+        if !taken && let Some(rest) = line.trim_start().strip_prefix("# ") {
+            title = rest.trim().to_owned();
+            taken = true;
+            continue;
+        }
+        body.push(line);
+    }
+    (title, body.join("\n"))
+}
+
+fn language_name(language: audis_common::Language) -> &'static str {
+    match language {
+        audis_common::Language::English => "English",
+        audis_common::Language::Indonesian => "Indonesian",
+    }
+}
+
+fn format_when(rfc3339: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(rfc3339)
+        .map(|dt| dt.format("%d %B %Y").to_string())
+        .unwrap_or_else(|_| rfc3339.to_owned())
 }
 
 fn clip_transcript(text: &str, max: usize) -> String {

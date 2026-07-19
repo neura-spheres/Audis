@@ -39,6 +39,10 @@ pub mod events {
     /// Answer the latest line now, from the global shortcut.
     pub const ASSISTANT_ASK: &str = "audis://assistant/ask";
 
+    /// Whether the caption overlay is interactive right now (the cursor is over
+    /// it), so it can raise its opacity and show its drag affordance.
+    pub const CAPTION_ACTIVE: &str = "audis://caption/active";
+
     /// Rolling meeting intelligence changed.
     pub const MEETING_UPDATE: &str = "audis://meeting/update";
 
@@ -70,6 +74,7 @@ pub mod events {
         ASSISTANT_STATUS,
         ASSISTANT_RESPONSE,
         ASSISTANT_ASK,
+        CAPTION_ACTIVE,
         MEETING_UPDATE,
         UPDATE_STATUS,
         UPDATE_PROGRESS,

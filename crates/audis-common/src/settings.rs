@@ -155,6 +155,14 @@ impl Default for SpeakerSettings {
     }
 }
 
+/// Session audio recording.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RecordingSettings {
+    /// Save the audio of every session to the recordings folder.
+    pub enabled: bool,
+}
+
 /// Caption appearance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -310,6 +318,8 @@ pub struct Settings {
     pub transcription: TranscriptionSettings,
     /// Speaker separation.
     pub speakers: SpeakerSettings,
+    /// Session audio recording.
+    pub recording: RecordingSettings,
     /// Caption appearance.
     pub captions: CaptionSettings,
     /// Global shortcuts.
@@ -330,6 +340,7 @@ impl Default for Settings {
             audio: AudioSettings::default(),
             transcription: TranscriptionSettings::default(),
             speakers: SpeakerSettings::default(),
+            recording: RecordingSettings::default(),
             captions: CaptionSettings::default(),
             shortcuts: ShortcutSettings::default(),
             assistant: AssistantSettings::default(),

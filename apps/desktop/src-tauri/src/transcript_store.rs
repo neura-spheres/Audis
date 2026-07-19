@@ -44,6 +44,8 @@ pub enum TranscriptLine {
     Header(SessionHeader),
     /// One recognised segment.
     Segment(Box<TranscriptSegment>),
+    /// A correction to an earlier segment, applied on read.
+    Revision(Box<audis_common::SegmentRevision>),
     /// Session summary. Absent if Audis was killed mid-session, which is how a
     Footer(SessionFooter),
 }
@@ -222,6 +224,7 @@ fn read_summary(path: &std::path::Path) -> Option<SessionSummary> {
             Ok(TranscriptLine::Header(value)) => header = Some(value),
             Ok(TranscriptLine::Segment(_)) => count += 1,
             Ok(TranscriptLine::Footer(value)) => footer = Some(value),
+            Ok(TranscriptLine::Revision(_)) => {}
             Err(_) => {}
         }
     }
@@ -249,12 +252,60 @@ pub fn read_segments(paths: &AppPaths, id: Uuid) -> Result<Vec<TranscriptSegment
     })?;
 
     let mut segments = Vec::new();
+    let mut revisions = Vec::new();
     for line in content.lines() {
-        if let Ok(TranscriptLine::Segment(segment)) = serde_json::from_str(line) {
-            segments.push(*segment);
+        match serde_json::from_str(line) {
+            Ok(TranscriptLine::Segment(segment)) => segments.push(*segment),
+            Ok(TranscriptLine::Revision(revision)) => revisions.push(*revision),
+            _ => {}
         }
     }
+
+    for revision in revisions {
+        if let Some(segment) = segments.iter_mut().find(|s| s.id == revision.id) {
+            segment.text = revision.text;
+            segment.speaker = revision.speaker;
+        }
+    }
+
     Ok(segments)
+}
+
+/// Append a correction to a saved session and return the corrected segment.
+pub fn revise_segment(
+    paths: &AppPaths,
+    session_id: Uuid,
+    revision: audis_common::SegmentRevision,
+) -> Result<TranscriptSegment> {
+    let path = paths.session_dir(session_id).join("transcript.jsonl");
+
+    let json = serde_json::to_string(&TranscriptLine::Revision(Box::new(revision.clone())))
+        .map_err(|source| AudisError::Serialization {
+            context: "a transcript revision".to_owned(),
+            source,
+        })?;
+
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .map_err(|source| AudisError::Io {
+            path: path.clone(),
+            detail: "could not open the transcript to correct it".to_owned(),
+            source,
+        })?;
+    writeln!(file, "{json}").map_err(|source| AudisError::Io {
+        path: path.clone(),
+        detail: "could not write the correction".to_owned(),
+        source,
+    })?;
+
+    read_segments(paths, session_id)?
+        .into_iter()
+        .find(|segment| segment.id == revision.id)
+        .ok_or(AudisError::InvalidArgument {
+            field: "segmentId".to_owned(),
+            detail: "no such segment in this session".to_owned(),
+        })
 }
 
 /// Delete a saved session and everything in its folder.
@@ -293,7 +344,7 @@ pub fn export(paths: &AppPaths, id: Uuid, format: ExportFormat) -> Result<std::p
     Ok(path)
 }
 
-pub fn write_report(paths: &AppPaths, id: Uuid, markdown: &str) -> Result<std::path::PathBuf> {
+pub fn write_report(paths: &AppPaths, id: Uuid, pdf: &[u8]) -> Result<std::path::PathBuf> {
     let dir = paths.exports_dir();
     std::fs::create_dir_all(&dir).map_err(|source| AudisError::Io {
         path: dir.clone(),
@@ -301,8 +352,8 @@ pub fn write_report(paths: &AppPaths, id: Uuid, markdown: &str) -> Result<std::p
         source,
     })?;
 
-    let path = dir.join(format!("session-{id}-report.md"));
-    std::fs::write(&path, markdown).map_err(|source| AudisError::Io {
+    let path = dir.join(format!("session-{id}-report.pdf"));
+    std::fs::write(&path, pdf).map_err(|source| AudisError::Io {
         path: path.clone(),
         detail: "could not write the report".to_owned(),
         source,
@@ -437,6 +488,39 @@ mod tests {
         assert!(contents.contains("before the crash"));
 
         assert!(!contents.contains("\"footer\""));
+    }
+
+    #[test]
+    fn a_revision_corrects_a_segment_on_read() {
+        let (_dir, paths) = paths();
+        let id = Uuid::new_v4();
+
+        let mut writer =
+            SessionWriter::create(&paths, id, SessionMode::Transcription, Language::English)
+                .expect("create");
+        let original = segment(id, "helo wrold");
+        let segment_id = original.id;
+        writer.append(&original).expect("append");
+        writer.finish().expect("finish");
+
+        let updated = revise_segment(
+            &paths,
+            id,
+            audis_common::SegmentRevision {
+                id: segment_id,
+                text: "hello world".to_owned(),
+                speaker: Some("Alice".to_owned()),
+            },
+        )
+        .expect("revise");
+
+        assert_eq!(updated.text, "hello world");
+        assert_eq!(updated.speaker.as_deref(), Some("Alice"));
+
+        let segments = read_segments(&paths, id).expect("read");
+        assert_eq!(segments.len(), 1, "a revision must not add a segment");
+        assert_eq!(segments[0].text, "hello world");
+        assert_eq!(segments[0].speaker.as_deref(), Some("Alice"));
     }
 
     #[test]

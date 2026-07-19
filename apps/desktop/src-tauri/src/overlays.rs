@@ -43,13 +43,7 @@ pub fn show(app: &AppHandle, overlay: Overlay) {
     window.set_always_on_top(true).ok();
 
     if overlay == Overlay::Captions {
-        let click_through = app
-            .state::<crate::commands::AppState>()
-            .settings
-            .get()
-            .captions
-            .click_through;
-        crate::commands::apply_caption_click_through(app, click_through);
+        crate::caption_hit::start(app);
     }
 }
 
@@ -137,6 +131,9 @@ fn assistant_position(
 
 /// Hide one overlay without ending the session.
 pub fn hide(app: &AppHandle, overlay: Overlay) {
+    if overlay == Overlay::Captions {
+        crate::caption_hit::stop(app);
+    }
     if let Some(window) = app.get_webview_window(overlay.label()) {
         window.hide().ok();
     }

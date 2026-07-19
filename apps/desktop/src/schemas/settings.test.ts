@@ -28,6 +28,9 @@ describe("settings round-trip", () => {
       enabled: true,
       expectedSpeakers: 2,
     },
+    recording: {
+      enabled: false,
+    },
     captions: {
       fontSize: 40,
       maxLines: 5,

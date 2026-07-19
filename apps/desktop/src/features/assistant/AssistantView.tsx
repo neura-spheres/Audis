@@ -6,6 +6,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { askAssistant, listProviderModels, listProviders } from "@/services/ipc";
 import type { AssistantContext, ProviderId, ProviderStatus } from "@/schemas/ipc";
 import { addQuestion, dropEntry, failAnswer, resolveAnswer, useAssistantFeed } from "./feed";
+import { useMeeting } from "./meeting";
 
 const CONTEXTS: { id: AssistantContext; label: string; hint: string }[] = [
   { id: "general", label: "General", hint: "A normal conversation." },
@@ -148,9 +149,75 @@ export function AssistantView() {
           </section>
 
           <AskBox disabled={!hasKeyForChosen} />
+          <MeetingNotes />
           <Feed />
         </>
       ) : null}
+    </div>
+  );
+}
+
+function MeetingNotes() {
+  const meeting = useMeeting();
+  if (!meeting) return null;
+
+  const hasContent =
+    meeting.summary.trim().length > 0 ||
+    meeting.decisions.length > 0 ||
+    meeting.actionItems.length > 0;
+  if (!hasContent) return null;
+
+  return (
+    <section className="flex flex-col gap-2">
+      <h2 className="px-1 text-subheadline font-semibold">Meeting notes</h2>
+      <div
+        data-selectable
+        className="flex flex-col gap-3 p-3"
+        style={{
+          background: "var(--surface-content)",
+          borderRadius: "var(--radius-card)",
+          boxShadow: "var(--shadow-card)",
+        }}
+      >
+        {meeting.summary.trim() ? (
+          <p
+            className="text-subheadline whitespace-pre-wrap"
+            style={{ color: "var(--label-primary)" }}
+          >
+            {meeting.summary}
+          </p>
+        ) : null}
+        {meeting.decisions.length > 0 ? (
+          <NoteList title="Decisions" items={meeting.decisions} />
+        ) : null}
+        {meeting.actionItems.length > 0 ? (
+          <NoteList title="Action items" items={meeting.actionItems} />
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function NoteList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-footnote font-medium" style={{ color: "var(--label-secondary)" }}>
+        {title}
+      </span>
+      <ul className="flex flex-col gap-1">
+        {items.map((item, index) => (
+          <li
+            key={`${title}-${index}`}
+            className="flex items-start gap-2 text-footnote"
+            style={{ color: "var(--label-primary)" }}
+          >
+            <span aria-hidden className="mt-[3px]" style={{ color: "var(--label-tertiary)" }}>
+              •
+            </span>
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

@@ -94,6 +94,10 @@ export const speakerSettingsSchema = z.object({
   expectedSpeakers: z.number().int().nonnegative(),
 });
 
+export const recordingSettingsSchema = z.object({
+  enabled: z.boolean(),
+});
+
 export const captionSettingsSchema = z.object({
   fontSize: z.number().int().positive(),
   maxLines: z.number().int().positive(),
@@ -190,6 +194,7 @@ export const settingsSchema = z.object({
   audio: audioSettingsSchema,
   transcription: transcriptionSettingsSchema,
   speakers: speakerSettingsSchema,
+  recording: recordingSettingsSchema,
   captions: captionSettingsSchema,
   shortcuts: shortcutSettingsSchema,
   assistant: assistantSettingsSchema,
@@ -466,6 +471,13 @@ export const speakerUpdateSchema = z.object({
 });
 export type SpeakerUpdate = z.infer<typeof speakerUpdateSchema>;
 
+export const meetingUpdateSchema = z.object({
+  summary: z.string(),
+  decisions: z.array(z.string()),
+  actionItems: z.array(z.string()),
+});
+export type MeetingUpdate = z.infer<typeof meetingUpdateSchema>;
+
 /** Mirrors `AsrState`. */
 export const asrStateSchema = z.enum([
   "starting",
@@ -520,6 +532,7 @@ export type AudioSettings = z.infer<typeof audioSettingsSchema>;
 export type TranscriptionSettings = z.infer<typeof transcriptionSettingsSchema>;
 export type CaptionSettings = z.infer<typeof captionSettingsSchema>;
 export type SpeakerSettings = z.infer<typeof speakerSettingsSchema>;
+export type RecordingSettings = z.infer<typeof recordingSettingsSchema>;
 export type ShortcutSettings = z.infer<typeof shortcutSettingsSchema>;
 export type ProviderConfig = z.infer<typeof providerConfigSchema>;
 export type Settings = z.infer<typeof settingsSchema>;

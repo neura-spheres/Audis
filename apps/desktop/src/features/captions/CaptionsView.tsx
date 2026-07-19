@@ -85,7 +85,7 @@ export function CaptionsView() {
 
         <Row
           label="Click through captions"
-          help="Clicks pass to whatever is behind. Leave this off to drag the captions by grabbing them, or right-click them for more options."
+          help="Captions ignore the mouse so clicks reach whatever is behind them; a small handle above them stays available to bring them back. When off, the captions light up and become draggable only while you point at them."
         >
           <Switch
             label="Click through captions"

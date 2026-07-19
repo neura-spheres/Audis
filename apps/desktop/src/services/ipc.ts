@@ -14,6 +14,7 @@ import {
   sessionSummarySchema,
   updateCheckSchema,
   transcriptSegmentSchema,
+  meetingUpdateSchema,
   settingsSchema,
   userFacingErrorSchema,
   type AppInfo,
@@ -32,6 +33,7 @@ import {
   type SessionSummary,
   type UpdateCheck,
   type TranscriptSegment,
+  type MeetingUpdate,
   type Settings,
   type UserFacingError,
 } from "@/schemas/ipc";
@@ -277,6 +279,17 @@ export function setCaptionClickThrough(clickThrough: boolean): Promise<void> {
   return callCommand("set_caption_click_through", voidResult, { clickThrough });
 }
 
+/** Report the caption's interactive regions (CSS px, relative to its window). */
+export interface HotRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+export function setCaptionHotRects(rects: HotRect[]): Promise<void> {
+  return callCommand("set_caption_hot_rects", voidResult, { rects });
+}
+
 /** Bring the main window to the front, restoring session overlays with it. */
 export function openMainWindow(): Promise<void> {
   return callCommand("open_main_window", voidResult);
@@ -304,4 +317,24 @@ export function exportSession(id: string, format: ExportFormat): Promise<string>
 
 export function generateSessionReport(id: string): Promise<string> {
   return callCommand("generate_session_report", z.string(), { id });
+}
+
+/** Correct one segment of a saved session; returns the corrected segment. */
+export function reviseSessionSegment(
+  sessionId: string,
+  segmentId: string,
+  text: string,
+  speaker: string | null,
+): Promise<TranscriptSegment> {
+  return callCommand("revise_session_segment", transcriptSegmentSchema, {
+    sessionId,
+    segmentId,
+    text,
+    speaker,
+  });
+}
+
+/** Refresh the rolling meeting notes from the transcript so far. */
+export function meetingUpdate(transcript: string[], previous: string): Promise<MeetingUpdate> {
+  return callCommand("meeting_update", meetingUpdateSchema, { transcript, previous });
 }

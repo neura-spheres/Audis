@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useOverlayMenu, type OverlayMenuItem } from "@/components/OverlayMenu";
 import { useSession } from "@/hooks/useSession";
@@ -9,6 +9,8 @@ import {
   openMainWindow,
   resetCaptionPosition,
   setCaptionClickThrough,
+  setCaptionHotRects,
+  type HotRect,
 } from "@/services/ipc";
 import {
   diagnosticWarningSchema,
@@ -18,19 +20,21 @@ import {
   type TranscriptSegment,
 } from "@/schemas/ipc";
 
-/** The caption overlay. */
 export function CaptionWindow() {
   const [lines, setLines] = useState<TranscriptSegment[]>([]);
-  /// The sentence being spoken right now, before it is finished and replaced.
   const [partial, setPartial] = useState<TranscriptSegment>();
   const [captions, setCaptions] = useState<CaptionSettings>();
-  const [hovered, setHovered] = useState(false);
-  /// Why no captions are appearing, when something is wrong.
+  const [active, setActive] = useState(false);
+  const [locked, setLocked] = useState(false);
   const [problem, setProblem] = useState<string>();
   const { session, stop, setPaused } = useSession();
   const paused = session?.state === "paused";
 
+  const panelRef = useRef<HTMLDivElement>(null);
+  const gripRef = useRef<HTMLButtonElement>(null);
+
   const clickThrough = captions?.clickThrough ?? false;
+  const draggable = !locked && !clickThrough;
 
   const menuItems: OverlayMenuItem[] = [
     {
@@ -40,9 +44,14 @@ export function CaptionWindow() {
     },
     { id: "open", label: "Open Audis", onSelect: () => void openMainWindow() },
     {
+      id: "lock",
+      label: locked ? "Unlock position" : "Lock position",
+      separatorBefore: true,
+      onSelect: () => setLocked((value) => !value),
+    },
+    {
       id: "click-through",
       label: clickThrough ? "Make captions clickable" : "Let clicks pass through",
-      separatorBefore: true,
       onSelect: () => void setCaptionClickThrough(!clickThrough),
     },
     {
@@ -64,20 +73,26 @@ export function CaptionWindow() {
     },
   ];
 
-  const { menu, onContextMenu } = useOverlayMenu(menuItems);
+  const { menu, onContextMenu, isOpen: menuOpen } = useOverlayMenu(menuItems);
 
   useEffect(() => {
-    const load = () => {
-      getSettings()
-        .then((settings) => setCaptions(settings.captions))
-        .catch(() => undefined);
-    };
-    load();
+    getSettings()
+      .then((settings) => setCaptions(settings.captions))
+      .catch(() => undefined);
 
-    return subscribe(AUDIS_EVENTS.settingsChanged, (payload) => {
+    const stopSettings = subscribe(AUDIS_EVENTS.settingsChanged, (payload) => {
       const parsed = settingsSchema.safeParse(payload);
       if (parsed.success) setCaptions(parsed.data.captions);
     });
+
+    const stopActive = subscribe<boolean>(AUDIS_EVENTS.captionActive, (payload) => {
+      if (typeof payload === "boolean") setActive(payload);
+    });
+
+    return () => {
+      stopSettings();
+      stopActive();
+    };
   }, []);
 
   const maxLines = captions?.maxLines ?? 2;
@@ -86,15 +101,11 @@ export function CaptionWindow() {
     const stopTranscript = subscribe(AUDIS_EVENTS.transcriptFinal, (payload) => {
       const parsed = transcriptSegmentSchema.safeParse(payload);
       if (!parsed.success) return;
-
       setLines((current) => [...current, parsed.data].slice(-maxLines));
       setPartial(undefined);
-      // Words arrived, so whatever was wrong is over.
       setProblem(undefined);
     });
 
-    // Recognition is failing. Without this the captions simply never appear and
-    // there is nothing on screen to say why.
     const stopWarning = subscribe(AUDIS_EVENTS.diagnosticWarning, (payload) => {
       const parsed = diagnosticWarningSchema.safeParse(payload);
       if (parsed.success && parsed.data.kind.startsWith("asr.")) {
@@ -121,14 +132,45 @@ export function CaptionWindow() {
     };
   }, [maxLines]);
 
+  useEffect(() => {
+    if (!captions) return;
+
+    const report = () => {
+      let rects: HotRect[] = [];
+      if (menuOpen) {
+        rects = [{ x: 0, y: 0, w: window.innerWidth, h: window.innerHeight }];
+      } else if (clickThrough) {
+        rects = rectOf(gripRef.current);
+      } else {
+        rects = rectOf(panelRef.current);
+      }
+      void setCaptionHotRects(rects);
+    };
+
+    report();
+
+    const observer = new ResizeObserver(report);
+    if (panelRef.current) observer.observe(panelRef.current);
+    if (gripRef.current) observer.observe(gripRef.current);
+    window.addEventListener("resize", report);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", report);
+    };
+  }, [captions, clickThrough, menuOpen]);
+
   if (!captions) return null;
 
-  const opacity = captions.backgroundOpacity / 100;
+  const baseOpacity = captions.backgroundOpacity / 100;
+  const opacity = active ? Math.max(0.9, baseOpacity) : baseOpacity;
   const hasPanel = opacity > 0.01;
-  const showAffordance = hovered && !clickThrough;
+  const showAffordance = active && draggable;
 
   const visible = [...lines, ...(partial ? [partial] : [])].slice(-maxLines);
   const showing = visible.length > 0 || problem !== undefined;
+
+  const dragProps = draggable ? { "data-tauri-drag-region": "" } : {};
 
   return (
     <div
@@ -136,14 +178,13 @@ export function CaptionWindow() {
       onContextMenu={onContextMenu}
     >
       <div
-        data-tauri-drag-region
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
+        {...dragProps}
+        ref={panelRef}
         className="relative flex w-fit max-w-full flex-col gap-1.5"
         style={{
           padding: hasPanel ? "10px 16px" : "4px 8px",
           borderRadius: 16,
-          cursor: clickThrough ? "default" : "grab",
+          cursor: draggable ? "grab" : "default",
           background: hasPanel ? `rgba(14, 15, 17, ${opacity})` : "transparent",
           backdropFilter: hasPanel
             ? `blur(${Math.round(opacity * 22)}px) saturate(140%)`
@@ -158,11 +199,16 @@ export function CaptionWindow() {
             : hasPanel
               ? `0 8px 40px rgba(0, 0, 0, ${0.45 * opacity})`
               : undefined,
-          opacity: showing ? 1 : 0,
+          opacity: showing || active ? 1 : 0,
           transition: "border-color 140ms ease, box-shadow 140ms ease, opacity 180ms ease",
         }}
       >
-        <DragHandle visible={showAffordance} />
+        {clickThrough ? (
+          <GripButton gripRef={gripRef} active={active} onOpen={onContextMenu} />
+        ) : (
+          <DragHandle visible={showAffordance} />
+        )}
+
         {problem ? <Problem message={problem} /> : null}
         {visible.map((line, index) => (
           <CaptionLine
@@ -170,6 +216,7 @@ export function CaptionWindow() {
             line={line}
             settings={captions}
             hasPanel={hasPanel}
+            draggable={draggable}
             faded={index < visible.length - 1}
           />
         ))}
@@ -180,7 +227,12 @@ export function CaptionWindow() {
   );
 }
 
-/** Why the captions stopped, said plainly and in their place. */
+function rectOf(element: Element | null): HotRect[] {
+  if (!element) return [];
+  const rect = element.getBoundingClientRect();
+  return [{ x: rect.left, y: rect.top, w: rect.width, h: rect.height }];
+}
+
 function Problem({ message }: { message: string }) {
   return (
     <p
@@ -196,7 +248,6 @@ function Problem({ message }: { message: string }) {
   );
 }
 
-/** A small grab handle that fades in when the captions are hovered. */
 function DragHandle({ visible }: { visible: boolean }) {
   return (
     <span
@@ -215,22 +266,65 @@ function DragHandle({ visible }: { visible: boolean }) {
   );
 }
 
+function GripButton({
+  gripRef,
+  active,
+  onOpen,
+}: {
+  gripRef: React.RefObject<HTMLButtonElement | null>;
+  active: boolean;
+  onOpen: (event: React.MouseEvent) => void;
+}) {
+  return (
+    <button
+      ref={gripRef}
+      type="button"
+      aria-label="Caption options"
+      title="Caption options — clicks pass through the rest"
+      onClick={onOpen}
+      onContextMenu={onOpen}
+      className="absolute -top-7 left-1/2 flex -translate-x-1/2 items-center justify-center"
+      style={{
+        width: 42,
+        height: 22,
+        borderRadius: 999,
+        background: "rgba(28, 28, 32, 0.92)",
+        border: "0.5px solid rgba(255, 255, 255, 0.22)",
+        color: "rgba(255, 255, 255, 0.75)",
+        boxShadow: "0 6px 20px rgba(0, 0, 0, 0.5)",
+        opacity: active ? 1 : 0.55,
+        transition: "opacity 140ms ease",
+        cursor: "pointer",
+      }}
+    >
+      <svg width="16" height="4" viewBox="0 0 16 4" fill="currentColor" aria-hidden>
+        <circle cx="2" cy="2" r="1.6" />
+        <circle cx="8" cy="2" r="1.6" />
+        <circle cx="14" cy="2" r="1.6" />
+      </svg>
+    </button>
+  );
+}
+
 function CaptionLine({
   line,
   settings,
   hasPanel,
+  draggable,
   faded,
 }: {
   line: TranscriptSegment;
   settings: CaptionSettings;
   hasPanel: boolean;
+  draggable: boolean;
   faded: boolean;
 }) {
   const size = settings.fontSize;
+  const dragProps = draggable ? { "data-tauri-drag-region": "" } : {};
 
   return (
     <p
-      data-tauri-drag-region
+      {...dragProps}
       className="flex items-baseline gap-2.5 leading-[1.3]"
       style={{
         fontSize: size,
@@ -249,7 +343,6 @@ function CaptionLine({
   );
 }
 
-/** Who said it. */
 function SourceLabel({ line, size }: { line: TranscriptSegment; size: number }) {
   const colour = sourceColour(line.source);
 
@@ -280,7 +373,6 @@ function SourceLabel({ line, size }: { line: TranscriptSegment; size: number }) 
   );
 }
 
-/** Microphone and computer audio get distinct hues. */
 function sourceColour(source: TranscriptSegment["source"]): string {
   return source === "microphone" ? "#4ade80" : "#60a5fa";
 }

@@ -4,6 +4,33 @@ All notable changes to Audis are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Audis adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-07-19
+
+### Added
+
+- Session audio recording: a toggle in Features records each captured source
+  while a session runs and saves it to the recordings folder as an Opus `.ogg`
+  file. Opus (BSD-licensed) is used instead of MP3, whose only mature encoder
+  is LGPL and disallowed by the project's licence policy.
+- Live meeting notes: while the assistant is on, Audis keeps a rolling summary
+  with decisions and action items in the Assistant view, refreshed as the
+  session goes.
+- Editable transcripts: correct a saved session's lines (text and speaker) from
+  the session view; corrections are stored as append-only revisions.
+- Audio device hot-plug: the device list refreshes automatically when a
+  microphone or output is added, removed, or made the default.
+
+### Changed
+
+- The caption overlay is now cursor-aware: it lets clicks pass through to the
+  app behind it, and lights up and becomes draggable only while you point at it.
+  Right-click for a menu (pause, lock position, click-through, recentre, hide,
+  stop). In full click-through mode a small handle stays clickable so the menu
+  is always reachable.
+- Session reports are now generated as a formatted, paginated PDF (headings,
+  bullet and numbered lists, a title block, and page numbers) instead of
+  Markdown.
+
 ## [0.1.1] - 2026-07-18
 
 ### Added
@@ -55,4 +82,5 @@ All notable changes to Audis are documented here. The format follows
   [ADR-011](docs/adr/ADR-011-local-whisper-asr-engine.md). None of this affects
   people who install Audis; it is build-time only.
 
-[0.1.1]: https://github.com/neura-audis/audis-desktop
+[0.1.2]: https://github.com/neura-spheres/Audis/releases/tag/v0.1.2
+[0.1.1]: https://github.com/neura-spheres/Audis/releases/tag/v0.1.1

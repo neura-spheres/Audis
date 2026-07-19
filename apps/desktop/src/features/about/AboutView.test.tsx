@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { AboutView } from "./AboutView";
+import { AboutView, ReleaseNotes } from "./AboutView";
 import { AUDIS_APP_INFO_MOCK } from "@/test/fixtures";
 
 /** Exercises the whole identity path: a mocked get_app_info, through the */
@@ -46,5 +46,20 @@ describe("AboutView", () => {
       expect(screen.getByRole("alert")).toBeInTheDocument();
     });
     expect(screen.getByText("Your data was not affected.")).toBeInTheDocument();
+  });
+
+  it("renders release-note Markdown instead of showing the raw syntax", () => {
+    const notes = "## Audis 0.1.2\n\n### New\n\n- **Record** to `.ogg`\n- Meeting notes";
+    const { container } = render(<ReleaseNotes notes={notes} />);
+
+    expect(container.querySelectorAll("li")).toHaveLength(2);
+    expect(container.querySelector("strong")?.textContent).toBe("Record");
+    expect(container.querySelector("code")?.textContent).toBe(".ogg");
+    expect(screen.getByText("Audis 0.1.2")).toBeInTheDocument();
+
+    const text = container.textContent ?? "";
+    expect(text).not.toContain("##");
+    expect(text).not.toContain("**");
+    expect(text).not.toContain("`");
   });
 });

@@ -52,6 +52,31 @@ impl TranscriptSegment {
     }
 }
 
+/// Rolling meeting intelligence, carried on `audis://meeting/update`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingUpdate {
+    /// A short running summary of the session so far.
+    pub summary: String,
+    /// Decisions or conclusions reached.
+    pub decisions: Vec<String>,
+    /// Concrete action items, ideally with an owner.
+    pub action_items: Vec<String>,
+}
+
+/// A correction to an already-written segment, carried on
+/// `audis://transcript/revision` and appended to the transcript file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SegmentRevision {
+    /// The segment being corrected.
+    pub id: Uuid,
+    /// The corrected words.
+    pub text: String,
+    /// The corrected speaker label, if changed.
+    pub speaker: Option<String>,
+}
+
 /// A speaker becoming known, carried on `audis://speaker/update`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

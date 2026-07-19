@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 import { useSession } from "@/hooks/useSession";
 import { useSettings } from "@/hooks/useSettings";
 import { AUDIS_EVENTS, subscribe } from "@/services/events";
-import { askAssistant, assistantSummarize } from "@/services/ipc";
+import { askAssistant, assistantSummarize, meetingUpdate } from "@/services/ipc";
 import { transcriptSegmentSchema } from "@/schemas/ipc";
 import {
   addQuestion,
@@ -14,6 +14,7 @@ import {
   looksLikeQuestion,
   resolveAnswer,
 } from "./feed";
+import { clearMeeting, setMeeting } from "./meeting";
 
 /** Sentences kept before the question for local context. */
 const LINES_BEFORE = 8;
@@ -38,6 +39,9 @@ const RECENT_WINDOW = 10;
 
 /** How many un-summarised older lines trigger a summary refresh. */
 const SUMMARY_BATCH = 12;
+
+/** How many new lines trigger a meeting-notes refresh. */
+const MEETING_BATCH = 10;
 
 interface Pending {
   /** Index of the question line in the transcript. */
@@ -71,6 +75,9 @@ export function useAssistantEngine() {
   const summarizing = useRef(false);
   const busy = useRef(false);
   const pending = useRef<Pending | null>(null);
+  const meetingCount = useRef(0);
+  const meetingBusy = useRef(false);
+  const meetingPrev = useRef("");
 
   const enabled = settings?.assistant.enabled ?? false;
   const answerOwn = settings?.assistant.answerOwnQuestions ?? false;
@@ -85,7 +92,11 @@ export function useAssistantEngine() {
       summary.current = "";
       summarizedCount.current = 0;
       busy.current = false;
+      meetingCount.current = 0;
+      meetingBusy.current = false;
+      meetingPrev.current = "";
       clearFeed();
+      clearMeeting();
     }
   }, [running]);
 
@@ -107,6 +118,24 @@ export function useAssistantEngine() {
         .catch(() => undefined)
         .finally(() => {
           summarizing.current = false;
+        });
+    };
+
+    const maybeMeeting = () => {
+      if (meetingBusy.current) return;
+      if (transcript.current.length - meetingCount.current < MEETING_BATCH) return;
+
+      const at = transcript.current.length;
+      meetingBusy.current = true;
+      meetingUpdate(transcript.current, meetingPrev.current)
+        .then((update) => {
+          setMeeting(update);
+          meetingPrev.current = JSON.stringify(update);
+          meetingCount.current = at;
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          meetingBusy.current = false;
         });
     };
 
@@ -175,6 +204,7 @@ export function useAssistantEngine() {
       transcript.current = [...transcript.current, `${speaker}: ${segment.text}`];
 
       maybeSummarize();
+      maybeMeeting();
 
       // While a question is settling, every new line extends its trailing
       // context and pushes the answer back a little (up to the hard cap).
