@@ -15,8 +15,11 @@ use audis_common::events;
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager};
 
-/// How often the cursor is sampled.
+/// How often the cursor is sampled while idle.
 const POLL: Duration = Duration::from_millis(50);
+
+/// How often the window follows the cursor while being dragged.
+const DRAG_POLL: Duration = Duration::from_millis(8);
 
 /// A hot region, in CSS pixels relative to the caption window's viewport.
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -40,6 +43,8 @@ pub struct CaptionHot {
 struct Inner {
     rects: Vec<HotRect>,
     last: Option<bool>,
+    dragging: bool,
+    offset: (f64, f64),
 }
 
 impl CaptionHot {
@@ -81,12 +86,44 @@ pub fn stop(app: &AppHandle) {
     }
     let mut inner = state.lock();
     inner.last = None;
+    inner.dragging = false;
     inner.rects.clear();
 }
 
+/// Begin dragging the caption: remember where on the window it was grabbed, and
+/// keep it interactive so the drag is not cut off by the cursor loop.
+pub fn begin_drag(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("captions") else {
+        return;
+    };
+    let (Ok(cursor), Ok(position)) = (window.cursor_position(), window.outer_position()) else {
+        return;
+    };
+    window.set_ignore_cursor_events(false).ok();
+
+    let state = app.state::<CaptionHot>();
+    let mut inner = state.lock();
+    inner.dragging = true;
+    inner.offset = (
+        cursor.x - f64::from(position.x),
+        cursor.y - f64::from(position.y),
+    );
+    inner.last = Some(true);
+}
+
+/// Stop dragging the caption.
+pub fn end_drag(app: &AppHandle) {
+    let state = app.state::<CaptionHot>();
+    let mut inner = state.lock();
+    inner.dragging = false;
+    inner.last = None;
+}
+
 fn run(app: AppHandle, generation: u64) {
+    let mut nap = POLL;
     loop {
-        std::thread::sleep(POLL);
+        std::thread::sleep(nap);
+        nap = POLL;
 
         let state = app.state::<CaptionHot>();
         if state.generation.load(Ordering::SeqCst) != generation {
@@ -100,10 +137,25 @@ fn run(app: AppHandle, generation: u64) {
             continue;
         }
 
-        let (rects, last) = {
+        let (rects, last, dragging, offset) = {
             let inner = state.lock();
-            (inner.rects.clone(), inner.last)
+            (
+                inner.rects.clone(),
+                inner.last,
+                inner.dragging,
+                inner.offset,
+            )
         };
+
+        if dragging {
+            if let Ok(cursor) = window.cursor_position() {
+                let x = (cursor.x - offset.0).round() as i32;
+                let y = (cursor.y - offset.1).round() as i32;
+                window.set_position(tauri::PhysicalPosition::new(x, y)).ok();
+            }
+            nap = DRAG_POLL;
+            continue;
+        }
 
         let interactive = cursor_over(&window, &rects);
         if Some(interactive) == last {

@@ -290,6 +290,16 @@ export function setCaptionHotRects(rects: HotRect[]): Promise<void> {
   return callCommand("set_caption_hot_rects", voidResult, { rects });
 }
 
+/** Start dragging the caption overlay with the pointer. */
+export function beginCaptionDrag(): Promise<void> {
+  return callCommand("begin_caption_drag", voidResult);
+}
+
+/** Stop dragging the caption overlay. */
+export function endCaptionDrag(): Promise<void> {
+  return callCommand("end_caption_drag", voidResult);
+}
+
 /** Bring the main window to the front, restoring session overlays with it. */
 export function openMainWindow(): Promise<void> {
   return callCommand("open_main_window", voidResult);

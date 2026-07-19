@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "audis-asr"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "audis-common",
  "base64 0.22.1",
@@ -296,7 +296,7 @@ dependencies = [
 
 [[package]]
 name = "audis-audio"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "audis-common",
  "cpal",
@@ -308,7 +308,7 @@ dependencies = [
 
 [[package]]
 name = "audis-common"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "chrono",
  "directories",
@@ -321,7 +321,7 @@ dependencies = [
 
 [[package]]
 name = "audis-desktop"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "audiopus",
  "audis-asr",

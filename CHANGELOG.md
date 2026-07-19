@@ -4,6 +4,19 @@ All notable changes to Audis are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Audis adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-07-19
+
+### Fixed
+
+- Caption overlay dragging: the caption can be moved again by dragging it. The
+  previous drag path relied on window behaviour that does not work for a
+  focus-less overlay; it now follows the pointer directly.
+- Release notes in the updater card render as formatted text (headings, bullet
+  lists, bold, inline code) instead of showing the raw Markdown.
+- Assistant answer panel no longer has its drop shadow clipped along the bottom;
+  its window reserves enough transparent room around the card for the full
+  shadow.
+
 ## [0.1.2] - 2026-07-19
 
 ### Added

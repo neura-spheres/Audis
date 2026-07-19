@@ -153,6 +153,8 @@ pub fn run() {
             commands::reset_caption_position,
             commands::set_caption_click_through,
             commands::set_caption_hot_rects,
+            commands::begin_caption_drag,
+            commands::end_caption_drag,
             commands::list_sessions,
             commands::get_session_transcript,
             commands::delete_session,

@@ -4,6 +4,8 @@ import { useOverlayMenu, type OverlayMenuItem } from "@/components/OverlayMenu";
 import { useSession } from "@/hooks/useSession";
 import { AUDIS_EVENTS, subscribe } from "@/services/events";
 import {
+  beginCaptionDrag,
+  endCaptionDrag,
   getSettings,
   hideOverlay,
   openMainWindow,
@@ -170,7 +172,21 @@ export function CaptionWindow() {
   const visible = [...lines, ...(partial ? [partial] : [])].slice(-maxLines);
   const showing = visible.length > 0 || problem !== undefined;
 
-  const dragProps = draggable ? { "data-tauri-drag-region": "" } : {};
+  const startDrag = (event: React.PointerEvent) => {
+    if (!draggable || event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    void beginCaptionDrag();
+  };
+
+  const stopDrag = (event: React.PointerEvent) => {
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      void 0;
+    }
+    void endCaptionDrag();
+  };
 
   return (
     <div
@@ -178,8 +194,10 @@ export function CaptionWindow() {
       onContextMenu={onContextMenu}
     >
       <div
-        {...dragProps}
         ref={panelRef}
+        onPointerDown={startDrag}
+        onPointerUp={stopDrag}
+        onLostPointerCapture={stopDrag}
         className="relative flex w-fit max-w-full flex-col gap-1.5"
         style={{
           padding: hasPanel ? "10px 16px" : "4px 8px",
@@ -216,7 +234,6 @@ export function CaptionWindow() {
             line={line}
             settings={captions}
             hasPanel={hasPanel}
-            draggable={draggable}
             faded={index < visible.length - 1}
           />
         ))}
@@ -252,7 +269,6 @@ function DragHandle({ visible }: { visible: boolean }) {
   return (
     <span
       aria-hidden
-      data-tauri-drag-region
       className="pointer-events-none absolute left-1/2 top-1 -translate-x-1/2"
       style={{
         width: 30,
@@ -310,21 +326,17 @@ function CaptionLine({
   line,
   settings,
   hasPanel,
-  draggable,
   faded,
 }: {
   line: TranscriptSegment;
   settings: CaptionSettings;
   hasPanel: boolean;
-  draggable: boolean;
   faded: boolean;
 }) {
   const size = settings.fontSize;
-  const dragProps = draggable ? { "data-tauri-drag-region": "" } : {};
 
   return (
     <p
-      {...dragProps}
       className="flex items-baseline gap-2.5 leading-[1.3]"
       style={{
         fontSize: size,

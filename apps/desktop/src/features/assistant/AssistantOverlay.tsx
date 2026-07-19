@@ -16,9 +16,12 @@ import { openMainWindow } from "@/services/ipc";
 /** How many recent answers the panel keeps on screen. */
 const MAX_ANSWERS = 4;
 
-/** The panel's fixed width, and the room left around the card for its shadow. */
-const PANEL_WIDTH = 380;
-const SHADOW_ROOM = 24;
+/** The card's width, and the transparent room left around it for its shadow. */
+const PANEL_WIDTH = 360;
+const ROOM_X = 44;
+const ROOM_TOP = 30;
+const ROOM_BOTTOM = 56;
+const WINDOW_WIDTH = PANEL_WIDTH + ROOM_X * 2;
 
 /**
  * The floating answer panel beside the controller chip.
@@ -42,8 +45,8 @@ export function AssistantOverlay() {
     if (!card) return;
 
     const fit = () => {
-      const height = Math.ceil(card.getBoundingClientRect().height) + SHADOW_ROOM;
-      void getCurrentWindow().setSize(new LogicalSize(PANEL_WIDTH, Math.max(64, height)));
+      const height = Math.ceil(card.getBoundingClientRect().height) + ROOM_TOP + ROOM_BOTTOM;
+      void getCurrentWindow().setSize(new LogicalSize(WINDOW_WIDTH, Math.max(96, height)));
     };
 
     fit();
@@ -128,7 +131,13 @@ export function AssistantOverlay() {
 
   return (
     <div
-      className="flex h-screen w-screen items-start justify-center p-2"
+      className="flex h-screen w-screen items-start justify-center"
+      style={{
+        paddingTop: ROOM_TOP,
+        paddingBottom: ROOM_BOTTOM,
+        paddingLeft: ROOM_X,
+        paddingRight: ROOM_X,
+      }}
       onContextMenu={onContextMenu}
     >
       <div

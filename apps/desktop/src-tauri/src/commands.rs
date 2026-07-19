@@ -101,6 +101,20 @@ pub fn set_caption_hot_rects(
     Ok(())
 }
 
+/// Start dragging the caption overlay with the pointer.
+#[tauri::command]
+pub fn begin_caption_drag(app: tauri::AppHandle) -> Result<()> {
+    crate::caption_hit::begin_drag(&app);
+    Ok(())
+}
+
+/// Stop dragging the caption overlay.
+#[tauri::command]
+pub fn end_caption_drag(app: tauri::AppHandle) -> Result<()> {
+    crate::caption_hit::end_drag(&app);
+    Ok(())
+}
+
 /// Look for a newer version of Audis on the user's chosen channel.
 #[tauri::command]
 pub async fn check_for_updates(app: tauri::AppHandle) -> Result<crate::updates::UpdateCheck> {
