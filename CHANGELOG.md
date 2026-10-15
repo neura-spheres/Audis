@@ -4,6 +4,23 @@ All notable changes to Audis are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Audis adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-10-15
+
+### Added
+
+- One-click updates from About: Audis downloads the new version, checks its
+  signature, installs it over the current one and restarts. Windows records the
+  new version in Settings, Apps. Releases now carry a signed update package.
+
+### Changed
+
+- New update-signing key. Installs of 0.1.4 and earlier cannot verify updates
+  signed with it, so install 0.1.5 by hand once; later versions update in-app.
+
+### Fixed
+
+- Release notes no longer split a long bullet into a separate paragraph.
+
 ## [0.1.4] - 2026-10-15
 
 ### Changed

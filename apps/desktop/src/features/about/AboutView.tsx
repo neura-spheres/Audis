@@ -284,6 +284,13 @@ export function ReleaseNotes({ notes }: { notes: string }) {
       continue;
     }
 
+    // An indented line under a bullet is that bullet wrapping, as Markdown
+    // writes long list items; it belongs to the item, not a new paragraph.
+    if (list.length > 0 && /^\s/.test(raw) && !/^[-*]\s/.test(line)) {
+      list[list.length - 1] += ` ${line}`;
+      continue;
+    }
+
     const bullet = /^[-*]\s+(.*)$/.exec(line);
     if (bullet) {
       list.push(bullet[1] ?? "");

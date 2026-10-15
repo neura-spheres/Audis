@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Audis",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "identifier": "ai.neura.audis",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -117,7 +117,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk1QkJDNjAxQkY4OThEMTEKUldRUmpZbS9BY2E3bGFZbDJYSjdVVlVMWWg0ajFHU2hKVXgzeVc3VFZkekFXRXZGK0krajhsSEYK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUyNkEwNzhCQTg1ODVFMUUKUldRZVhsaW9pd2RxNG5qLzhBMzk3NFgrdE53ZElBL0c5RlQ1NWVIY0pLdWY0MmVxZVpjTSs5T3YK",
       "endpoints": ["https://github.com/neura-spheres/Audis/releases/latest/download/latest.json"],
       "windows": {
         "installMode": "passive"

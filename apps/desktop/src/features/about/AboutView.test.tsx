@@ -62,4 +62,16 @@ describe("AboutView", () => {
     expect(text).not.toContain("**");
     expect(text).not.toContain("`");
   });
+
+  /// A long bullet wraps onto an indented line in the changelog; it must stay
+  /// one bullet rather than spilling out as a stray paragraph.
+  it("keeps a wrapped bullet in one list item", () => {
+    const notes = "- Build scripts work, and installers can be built\n  without the key.\n- Next";
+    const { container } = render(<ReleaseNotes notes={notes} />);
+
+    const items = container.querySelectorAll("li");
+    expect(items).toHaveLength(2);
+    expect(items[0]?.textContent).toContain("can be built without the key.");
+    expect(container.querySelectorAll("p")).toHaveLength(0);
+  });
 });

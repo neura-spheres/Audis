@@ -80,3 +80,21 @@ To build locally instead, `./scripts/build.ps1 -Bundle`, with
 `TAURI_SIGNING_PRIVATE_KEY` set if the artifacts need to be installable. Close
 Audis first: Windows locks a running `.exe` and the build fails with "Access is
 denied (os error 5)".
+
+### Releasing from this machine
+
+The private key lives at `%USERPROFILE%\.tauri\audis-updater.key` (no
+password), outside the repository; `build.ps1` picks it up when
+`TAURI_SIGNING_PRIVATE_KEY` is not set. Back it up somewhere durable. It
+replaced an earlier key that was lost in 0.1.5, which is why 0.1.4 and older
+cannot update in-app.
+
+1. Bump the version in `Cargo.toml`, `package.json`,
+   `apps/desktop/package.json` and `tauri.conf.json`, and add a `CHANGELOG.md`
+   section for it.
+2. `./scripts/build.ps1 -Bundle`, then `./scripts/update-manifest.ps1`.
+3. Commit and push, then publish the release with the NSIS installer, the MSI
+   and `target/release/bundle/latest.json` attached:
+   `gh release create vX.Y.Z --notes-file <notes> <setup.exe> <.msi> <latest.json>`.
+4. Cancel the Release workflow the tag starts unless the key is also a
+   repository secret; without it that run can only fail.

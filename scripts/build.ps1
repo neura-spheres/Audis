@@ -53,6 +53,14 @@ try {
         & (Join-Path $PSScriptRoot 'test.ps1')
     }
 
+    # The updater key lives outside the repository. When it is not in the
+    # environment (as it is in CI), the copy in the developer's profile signs the
+    # installers after the build instead. It cannot go through the environment:
+    # its password is empty, and Windows PowerShell deletes a variable set to
+    # an empty string, which leaves tauri waiting on a hidden password prompt.
+    $profileKey = Join-Path $env:USERPROFILE '.tauri\audis-updater.key'
+    $signAfter = $Bundle -and -not $env:TAURI_SIGNING_PRIVATE_KEY -and (Test-Path $profileKey)
+
     $arguments = @('tauri', 'build')
     if (-not $Bundle) {
         $arguments += '--no-bundle'
@@ -61,8 +69,10 @@ try {
         # Without the private key Tauri builds both installers and then fails
         # trying to sign the update package. Leaving that package out keeps the
         # installers, which need no key to install.
-        Write-Warning ('TAURI_SIGNING_PRIVATE_KEY is not set: building installers without ' +
-            'the signed update package. Fine for installing; not for publishing a release.')
+        if (-not $signAfter) {
+            Write-Warning ('No updater signing key: building installers without the signed ' +
+                'update package. Fine for installing; not for publishing a release.')
+        }
         $localConfig = Join-Path ([System.IO.Path]::GetTempPath()) 'audis-unsigned-bundle.json'
         # WriteAllText writes UTF-8 without a byte-order mark, which the JSON
         # parser requires; Set-Content in Windows PowerShell would add one.
@@ -81,6 +91,21 @@ try {
         $buildExit = $LASTEXITCODE
         $ErrorActionPreference = 'Stop'
         if ($buildExit -ne 0) { throw "tauri build failed with exit code $buildExit." }
+
+        if ($signAfter) {
+            $version = (Get-Content -Raw 'src-tauri/tauri.conf.json' | ConvertFrom-Json).version
+            $key = Get-Content -Raw $profileKey
+            foreach ($installer in @(
+                    "../../target/release/bundle/nsis/Audis_${version}_x64-setup.exe",
+                    "../../target/release/bundle/msi/Audis_${version}_x64_en-US.msi")) {
+                $ErrorActionPreference = 'Continue'
+                pnpm tauri signer sign -k $key --password '""' $installer | Out-Null
+                $signExit = $LASTEXITCODE
+                $ErrorActionPreference = 'Stop'
+                if ($signExit -ne 0) { throw "Signing $installer failed with exit code $signExit." }
+                Write-Host "Signed $installer" -ForegroundColor Green
+            }
+        }
     }
     finally {
         Pop-Location
