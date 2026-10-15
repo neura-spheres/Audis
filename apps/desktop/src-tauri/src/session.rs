@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use audis_asr::{
-    AsrEngine, Diarizer, EndpointConfig, EndpointEvent, Endpointer, Resampler, downmix_to_mono,
+    AsrEngine, Diarizer, EndpointConfig, EndpointEvent, Endpointer, LiveEvent, LiveInput,
+    LiveOutput, Resampler, downmix_to_mono,
 };
 use audis_common::{
     AsrState, AsrStatus, AudioSourceKind, AudisError, DiagnosticWarning, Language, Result,
@@ -23,6 +24,15 @@ const UTTERANCE_QUEUE_DEPTH: usize = 32;
 
 /// How many frame blocks may wait for the recorder before one is dropped.
 const RECORD_QUEUE_DEPTH: usize = 256;
+
+/// How many things a live socket has said may wait for the recognise thread.
+///
+/// Deep on purpose: dropping one of these loses a line of transcript, and there
+/// is no second copy of it anywhere.
+const WORD_QUEUE_DEPTH: usize = 256;
+
+/// How long a thread waits for work before checking whether to stop.
+const POLL: std::time::Duration = std::time::Duration::from_millis(40);
 
 /// How often an in-progress sentence is offered for an interim caption.
 const PARTIAL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(400);
@@ -87,10 +97,24 @@ impl ProblemReporter {
     }
 }
 
+/// How a session turns audio into words.
+///
+/// The two are different pipelines rather than two settings on one. A batch
+/// engine is handed whole sentences that the endpointer has already cut out of
+/// the stream, and answers each one on its own. A live engine is handed the
+/// stream itself and answers continuously, doing its own endpointing at the far
+/// end. See ADR-004.
+pub enum Recogniser {
+    /// One request per utterance, decoded on a single worker thread.
+    Batch(Box<dyn AsrEngine>),
+    /// A socket per source, fed audio as it is captured.
+    Live(audis_asr::LiveConfig),
+}
+
 /// What to start, gathered from settings by the caller.
 pub struct SessionRequest {
-    /// The engine that will recognise speech, already built and ready.
-    pub engine: Box<dyn AsrEngine>,
+    /// What will recognise speech, already built and ready.
+    pub recogniser: Recogniser,
     pub diarize: Option<Diarizer>,
     /// Where sessions are stored, when this mode saves one.
     pub paths: audis_common::AppPaths,
@@ -118,16 +142,91 @@ struct SourcedUtterance {
     utterance: audis_asr::Utterance,
 }
 
+/// One thing a live socket said, tagged with where and when.
+struct SourcedWords {
+    source: AudioSourceKind,
+    /// Milliseconds of audio this source had sent when the words arrived.
+    ///
+    /// Audio time rather than wall time, so a paused session leaves no gap in
+    /// the transcript and timestamps line up with the recording.
+    at_ms: i64,
+    event: LiveEvent,
+}
+
 /// The newest sentence-in-progress waiting for an interim decode.
 type PartialSlot = Arc<Mutex<Option<SourcedUtterance>>>;
 
-/// A started source: its capture, its prepare thread, and its recorder thread
-/// when recording is on.
-type SourceHandles = (
-    audis_audio::CaptureHandle,
-    JoinHandle<()>,
-    Option<JoinHandle<()>>,
-);
+/// A started source: its capture, and every thread started for it.
+type SourceHandles = (audis_audio::CaptureHandle, Vec<JoinHandle<()>>);
+
+/// The half of the pipeline every source shares, built once per session.
+enum Shared {
+    /// The endpointer cuts sentences and one worker decodes them.
+    Batch {
+        utterances: SyncSender<SourcedUtterance>,
+        partial: PartialSlot,
+        endpoint_config: EndpointConfig,
+        /// Whether the engine is cheap enough to re-decode a sentence mid-flow.
+        want_partials: bool,
+    },
+    /// Each source gets its own socket, and all of them report here.
+    Live {
+        config: audis_asr::LiveConfig,
+        words: SyncSender<SourcedWords>,
+    },
+}
+
+/// The half of the pipeline that belongs to one source.
+enum SourcePipeline {
+    Batch {
+        utterances: SyncSender<SourcedUtterance>,
+        partial: PartialSlot,
+        endpoint_config: EndpointConfig,
+        want_partials: bool,
+    },
+    Live {
+        input: LiveInput,
+        output: LiveOutput,
+        words: SyncSender<SourcedWords>,
+    },
+}
+
+impl Shared {
+    /// Build the half that belongs to `source`.
+    ///
+    /// A live session opens its socket here, before any device is touched, so a
+    /// refused key fails the session with the reason rather than opening a
+    /// microphone and then captioning nothing.
+    fn for_source(&self) -> Result<SourcePipeline> {
+        match self {
+            Self::Batch {
+                utterances,
+                partial,
+                endpoint_config,
+                want_partials,
+            } => Ok(SourcePipeline::Batch {
+                utterances: utterances.clone(),
+                partial: Arc::clone(partial),
+                endpoint_config: *endpoint_config,
+                want_partials: *want_partials,
+            }),
+            Self::Live { config, words } => {
+                let (input, output) = audis_asr::live::connect(config).map_err(|error| {
+                    // Logged as well as returned: without this line a failed
+                    // session leaves nothing in the log at all, and the reason
+                    // exists only in a window the user has already dismissed.
+                    tracing::error!(%error, "the live speech socket could not be opened");
+                    AudisError::Engine(Box::new(error.to_user_facing()))
+                })?;
+                Ok(SourcePipeline::Live {
+                    input,
+                    output,
+                    words: words.clone(),
+                })
+            }
+        }
+    }
+}
 
 /// Everything a running session owns.
 struct Running {
@@ -160,7 +259,7 @@ impl SessionController {
     /// Start a session.
     pub fn start(&self, app: &AppHandle, request: SessionRequest) -> Result<SessionStatus> {
         let SessionRequest {
-            engine,
+            recogniser,
             diarize,
             paths,
             mode,
@@ -214,39 +313,97 @@ impl SessionController {
 
         let stop = Arc::new(AtomicBool::new(false));
         let paused = Arc::new(AtomicBool::new(false));
-        let partial: PartialSlot = Arc::new(Mutex::new(None));
-        let (utterance_tx, utterance_rx) = sync_channel::<SourcedUtterance>(UTTERANCE_QUEUE_DEPTH);
 
         let mut captures = Vec::new();
         let mut workers = Vec::new();
 
-        // A local engine decodes for free, so it can afford live previews of the
-        // sentence in progress. A cloud engine bills every round-trip and has no
-        // streaming API, so it gets short chunks and no previews instead.
-        let offline = engine.capabilities().offline;
-        let endpoint_config = if offline {
-            EndpointConfig::default()
-        } else {
-            EndpointConfig {
-                silence_ms: CLOUD_SILENCE_MS,
-                max_utterance_ms: CLOUD_MAX_UTTERANCE_MS,
-                ..EndpointConfig::default()
+        let (shared, recogniser_thread) = match recogniser {
+            Recogniser::Batch(engine) => {
+                // A local engine decodes for free, so it can afford live
+                // previews of the sentence in progress. A batch cloud engine
+                // bills every round-trip, so it gets short chunks and no
+                // previews instead.
+                let offline = engine.capabilities().offline;
+                let endpoint_config = if offline {
+                    EndpointConfig::default()
+                } else {
+                    EndpointConfig {
+                        silence_ms: CLOUD_SILENCE_MS,
+                        max_utterance_ms: CLOUD_MAX_UTTERANCE_MS,
+                        ..EndpointConfig::default()
+                    }
+                };
+
+                let partial: PartialSlot = Arc::new(Mutex::new(None));
+                let (utterance_tx, utterance_rx) =
+                    sync_channel::<SourcedUtterance>(UTTERANCE_QUEUE_DEPTH);
+
+                let thread = spawn_recogniser(RecogniserSetup {
+                    app: app.clone(),
+                    session_id: id,
+                    language,
+                    engine,
+                    diarize,
+                    utterances: utterance_rx,
+                    partial: Arc::clone(&partial),
+                    stop: Arc::clone(&stop),
+                    writer,
+                });
+
+                (
+                    Shared::Batch {
+                        utterances: utterance_tx,
+                        partial,
+                        endpoint_config,
+                        want_partials: offline,
+                    },
+                    thread,
+                )
+            }
+
+            Recogniser::Live(config) => {
+                // Speaker separation reads the audio of a finished utterance,
+                // and a live socket never hands one over: the words arrive on
+                // their own. Saying so is better than quietly labelling every
+                // line with the source it came from.
+                if diarize.is_some() {
+                    tracing::info!("speaker separation is off: the live engine has no utterances");
+                    app.emit(
+                        events::DIAGNOSTIC_WARNING,
+                        DiagnosticWarning {
+                            kind: "speakers.unavailable".to_owned(),
+                            message: "Speaker separation is off for this session. The live \
+                                      engine transcribes as people speak, which leaves no \
+                                      audio to tell voices apart with."
+                                .to_owned(),
+                        },
+                    )
+                    .ok();
+                }
+
+                let (word_tx, word_rx) = sync_channel::<SourcedWords>(WORD_QUEUE_DEPTH);
+
+                let thread = spawn_live_recogniser(LiveRecogniserSetup {
+                    app: app.clone(),
+                    session_id: id,
+                    language,
+                    words: word_rx,
+                    stop: Arc::clone(&stop),
+                    writer,
+                });
+
+                (
+                    Shared::Live {
+                        config,
+                        words: word_tx,
+                    },
+                    thread,
+                )
             }
         };
 
         workers.push(
-            spawn_recogniser(RecogniserSetup {
-                app: app.clone(),
-                session_id: id,
-                language,
-                engine,
-                diarize,
-                utterances: utterance_rx,
-                partial: Arc::clone(&partial),
-                stop: Arc::clone(&stop),
-                writer,
-            })
-            .map_err(|error| AudisError::Configuration {
+            recogniser_thread.map_err(|error| AudisError::Configuration {
                 detail: format!("the recognition thread could not start: {error}"),
             })?,
         );
@@ -262,59 +419,73 @@ impl SessionController {
             })
         };
 
-        if want_microphone {
-            match start_source(
-                app,
+        for (source, wanted, device_id, started) in [
+            (
                 AudioSourceKind::Microphone,
+                want_microphone,
                 microphone_id.as_deref(),
-                utterance_tx.clone(),
-                Arc::clone(&partial),
-                Arc::clone(&stop),
-                Arc::clone(&paused),
-                endpoint_config,
-                offline,
-                record_path(AudioSourceKind::Microphone),
-            ) {
-                Ok((capture, worker, recorder)) => {
-                    captures.push(capture);
-                    workers.push(worker);
-                    workers.extend(recorder);
-                    started_microphone = true;
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "microphone capture could not start");
-                    emit_source_failed(app, AudioSourceKind::Microphone, &error);
-                }
+                &mut started_microphone,
+            ),
+            (
+                AudioSourceKind::ComputerAudio,
+                want_computer_audio,
+                computer_audio_id.as_deref(),
+                &mut started_computer_audio,
+            ),
+        ] {
+            if !wanted {
+                continue;
             }
-        }
 
-        if want_computer_audio {
+            // A live socket that will not open is the whole session's problem,
+            // not one source's: every source would fail the same way, and the
+            // reason is something the user has to fix rather than retry.
+            let pipeline = match shared.for_source() {
+                Ok(pipeline) => pipeline,
+                Err(error) => {
+                    stop.store(true, Ordering::SeqCst);
+                    // Before joining, not after: a prepare thread is parked on
+                    // its frame channel, and only closing the device ends it.
+                    captures.clear();
+                    for worker in workers {
+                        let _ = worker.join();
+                    }
+                    emit_state(
+                        app,
+                        id,
+                        mode,
+                        language,
+                        SessionState::Failed,
+                        0,
+                        false,
+                        false,
+                    );
+                    return Err(error);
+                }
+            };
+
             match start_source(
                 app,
-                AudioSourceKind::ComputerAudio,
-                computer_audio_id.as_deref(),
-                utterance_tx.clone(),
-                Arc::clone(&partial),
+                source,
+                device_id,
+                pipeline,
                 Arc::clone(&stop),
                 Arc::clone(&paused),
-                endpoint_config,
-                offline,
-                record_path(AudioSourceKind::ComputerAudio),
+                record_path(source),
             ) {
-                Ok((capture, worker, recorder)) => {
+                Ok((capture, threads)) => {
                     captures.push(capture);
-                    workers.push(worker);
-                    workers.extend(recorder);
-                    started_computer_audio = true;
+                    workers.extend(threads);
+                    *started = true;
                 }
                 Err(error) => {
-                    tracing::warn!(%error, "computer audio capture could not start");
-                    emit_source_failed(app, AudioSourceKind::ComputerAudio, &error);
+                    tracing::warn!(%error, ?source, "capture could not start");
+                    emit_source_failed(app, source, &error);
                 }
             }
         }
 
-        drop(utterance_tx);
+        drop(shared);
 
         if !started_microphone && !started_computer_audio {
             stop.store(true, Ordering::SeqCst);
@@ -509,18 +680,14 @@ impl Running {
     }
 }
 
-/// Open one capture and spawn the thread that prepares its audio.
-#[allow(clippy::too_many_arguments)]
+/// Open one capture and spawn the threads that carry its audio.
 fn start_source(
     app: &AppHandle,
     source: AudioSourceKind,
     device_id: Option<&str>,
-    utterances: SyncSender<SourcedUtterance>,
-    partial: PartialSlot,
+    pipeline: SourcePipeline,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
-    endpoint_config: EndpointConfig,
-    want_partials: bool,
     record_path: Option<std::path::PathBuf>,
 ) -> std::result::Result<SourceHandles, audis_audio::AudioError> {
     let (frame_tx, frame_rx) = sync_channel::<Vec<f32>>(FRAME_QUEUE_DEPTH);
@@ -553,39 +720,73 @@ fn start_source(
         }
     };
 
-    let worker = spawn_prepare(
-        app.clone(),
-        source,
-        capture.sample_rate(),
-        capture.channels(),
-        frame_rx,
-        utterances,
-        partial,
-        stop,
-        paused,
-        dropped,
-        endpoint_config,
-        want_partials,
-    )
-    .map_err(|error| audis_audio::AudioError::StreamStart {
+    let unstarted = |error: std::io::Error| audis_audio::AudioError::StreamStart {
         device: capture.device_name().to_owned(),
         detail: format!("the audio pipeline thread could not start: {error}"),
-    })?;
-
-    let recorder = match (record_rx, record_path) {
-        (Some(rx), Some(path)) => {
-            match crate::recorder::spawn(path, capture.sample_rate(), capture.channels(), rx) {
-                Ok(handle) => Some(handle),
-                Err(error) => {
-                    tracing::warn!(%error, ?source, "recording could not start");
-                    None
-                }
-            }
-        }
-        _ => None,
     };
 
-    Ok((capture, worker, recorder))
+    let mut threads = Vec::new();
+
+    match pipeline {
+        SourcePipeline::Batch {
+            utterances,
+            partial,
+            endpoint_config,
+            want_partials,
+        } => threads.push(
+            spawn_prepare(
+                app.clone(),
+                source,
+                capture.sample_rate(),
+                capture.channels(),
+                frame_rx,
+                utterances,
+                partial,
+                stop,
+                paused,
+                dropped,
+                endpoint_config,
+                want_partials,
+            )
+            .map_err(unstarted)?,
+        ),
+
+        SourcePipeline::Live {
+            input,
+            output,
+            words,
+        } => {
+            // Both threads read this: one counts the audio it has sent, the
+            // other stamps the words that come back with it.
+            let clock = Arc::new(AtomicU64::new(0));
+
+            threads.push(
+                spawn_live_prepare(
+                    app.clone(),
+                    source,
+                    capture.sample_rate(),
+                    capture.channels(),
+                    frame_rx,
+                    input,
+                    Arc::clone(&stop),
+                    paused,
+                    dropped,
+                    Arc::clone(&clock),
+                )
+                .map_err(unstarted)?,
+            );
+            threads.push(spawn_live_pump(source, output, words, clock, stop).map_err(unstarted)?);
+        }
+    }
+
+    if let (Some(rx), Some(path)) = (record_rx, record_path) {
+        match crate::recorder::spawn(path, capture.sample_rate(), capture.channels(), rx) {
+            Ok(handle) => threads.push(handle),
+            Err(error) => tracing::warn!(%error, ?source, "recording could not start"),
+        }
+    }
+
+    Ok((capture, threads))
 }
 
 /// A short, filesystem-safe name for a source, used in recording filenames.
@@ -685,6 +886,303 @@ fn spawn_prepare(
 
             tracing::debug!(?source, "prepare thread finished");
         })
+}
+
+/// Downmix and resample one source's audio straight into its live socket.
+///
+/// The batch pipeline's endpointer has no part here: the socket is fed the
+/// stream as it arrives and Gemini decides where the sentences are.
+#[allow(clippy::too_many_arguments)]
+fn spawn_live_prepare(
+    app: AppHandle,
+    source: AudioSourceKind,
+    sample_rate: u32,
+    channels: u16,
+    frames: Receiver<Vec<f32>>,
+    mut input: LiveInput,
+    stop: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
+    dropped: Arc<AtomicU64>,
+    clock: Arc<AtomicU64>,
+) -> std::io::Result<JoinHandle<()>> {
+    std::thread::Builder::new()
+        .name(format!("audis-live-{source:?}"))
+        .spawn(move || {
+            let mut resampler = Resampler::new(sample_rate);
+            let mut reported_drops = 0u64;
+
+            while let Ok(block) = frames.recv() {
+                if stop.load(Ordering::SeqCst) {
+                    break;
+                }
+
+                // Paused audio is discarded rather than sent, so a pause costs
+                // nothing and leaves no gap in the transcript's clock either.
+                if paused.load(Ordering::SeqCst) {
+                    continue;
+                }
+
+                let mono = downmix_to_mono(&block, channels);
+                let ready = resampler.push(&mono);
+                if ready.is_empty() {
+                    continue;
+                }
+
+                clock.fetch_add(ready.len() as u64, Ordering::Relaxed);
+                input.push(&ready);
+
+                let total = dropped.load(Ordering::Relaxed);
+                if total > reported_drops {
+                    reported_drops = total;
+                    app.emit(
+                        events::DIAGNOSTIC_WARNING,
+                        DiagnosticWarning {
+                            kind: "audio.frames_dropped".to_owned(),
+                            message: format!(
+                                "Audis could not keep up with {} audio and skipped some of it.",
+                                source.default_label().to_lowercase()
+                            ),
+                        },
+                    )
+                    .ok();
+                }
+            }
+
+            // Whatever is buffered is still part of the last sentence.
+            input.flush();
+            drop(input);
+
+            tracing::debug!(?source, "live prepare thread finished");
+        })
+}
+
+/// Carry one socket's words to the thread that publishes them.
+///
+/// A thread of its own rather than a poll on the prepare thread: a source that
+/// has gone quiet stops delivering audio, and the last sentence must still come
+/// through.
+fn spawn_live_pump(
+    source: AudioSourceKind,
+    output: LiveOutput,
+    words: SyncSender<SourcedWords>,
+    clock: Arc<AtomicU64>,
+    stop: Arc<AtomicBool>,
+) -> std::io::Result<JoinHandle<()>> {
+    std::thread::Builder::new()
+        .name(format!("audis-live-words-{source:?}"))
+        .spawn(move || {
+            loop {
+                if stop.load(Ordering::SeqCst) {
+                    break;
+                }
+
+                match output.recv_timeout(POLL) {
+                    Ok(event) => {
+                        let at_ms = samples_to_ms(clock.load(Ordering::Relaxed));
+                        if words
+                            .try_send(SourcedWords {
+                                source,
+                                at_ms,
+                                event,
+                            })
+                            .is_err()
+                        {
+                            tracing::warn!(?source, "recognition is behind; dropped a caption");
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    // The socket's own thread has ended, which it does once the
+                    // prepare thread lets go of the audio end.
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
+
+            tracing::debug!(?source, "live words thread finished");
+        })
+}
+
+/// Audio sent, as a position in the session.
+fn samples_to_ms(samples: u64) -> i64 {
+    (samples * 1000 / u64::from(audis_asr::TARGET_SAMPLE_RATE)) as i64
+}
+
+/// What the live recognise thread needs to run.
+struct LiveRecogniserSetup {
+    app: AppHandle,
+    session_id: Uuid,
+    language: Language,
+    words: Receiver<SourcedWords>,
+    stop: Arc<AtomicBool>,
+    /// `None` for a mode that promises not to write to disk.
+    writer: Option<crate::transcript_store::SessionWriter>,
+}
+
+/// Turn what the live sockets heard into transcript events.
+///
+/// One thread for every source, as in the batch pipeline, so the transcript
+/// file has a single writer and the ordering of what reaches it is decided in
+/// one place.
+fn spawn_live_recogniser(setup: LiveRecogniserSetup) -> std::io::Result<JoinHandle<()>> {
+    let LiveRecogniserSetup {
+        app,
+        session_id,
+        language,
+        words,
+        stop,
+        mut writer,
+    } = setup;
+
+    std::thread::Builder::new()
+        .name("audis-recognise-live".to_owned())
+        .spawn(move || {
+            let engine_id = audis_asr::live::ENGINE_ID;
+            let mut problems = ProblemReporter::default();
+            // Where the sentence in progress began, per source.
+            let mut opened: [Option<i64>; 2] = [None, None];
+
+            for source in [AudioSourceKind::Microphone, AudioSourceKind::ComputerAudio] {
+                emit_asr_status(&app, source, AsrState::Listening, engine_id, None);
+            }
+
+            loop {
+                if stop.load(Ordering::SeqCst) {
+                    break;
+                }
+
+                let heard = match words.recv_timeout(POLL) {
+                    Ok(heard) => heard,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                };
+
+                let SourcedWords {
+                    source,
+                    at_ms,
+                    event,
+                } = heard;
+                let began = &mut opened[usize::from(source == AudioSourceKind::ComputerAudio)];
+
+                match event {
+                    LiveEvent::Partial(text) => {
+                        let start_ms = *began.get_or_insert(at_ms);
+                        publish(
+                            &app,
+                            segment(
+                                session_id, source, language, engine_id, start_ms, at_ms, text,
+                                false,
+                            ),
+                            None,
+                        );
+                    }
+
+                    LiveEvent::Final(text) => {
+                        problems.clear();
+                        let start_ms = began.take().unwrap_or(at_ms);
+                        publish(
+                            &app,
+                            segment(
+                                session_id, source, language, engine_id, start_ms, at_ms, text,
+                                true,
+                            ),
+                            writer.as_mut(),
+                        );
+                    }
+
+                    LiveEvent::Failed(error) => {
+                        tracing::warn!(%error, ?source, "the live socket is failing");
+                        problems.report(&app, &error);
+                        emit_asr_status(
+                            &app,
+                            source,
+                            AsrState::Listening,
+                            engine_id,
+                            Some(error.to_string()),
+                        );
+                    }
+                }
+            }
+
+            if let Some(writer) = writer {
+                let saved = writer.segment_count();
+                match writer.finish() {
+                    Ok(path) => tracing::info!(?path, saved, "transcript saved"),
+                    Err(error) => tracing::error!(%error, "the transcript could not be closed"),
+                }
+            }
+
+            for source in [AudioSourceKind::Microphone, AudioSourceKind::ComputerAudio] {
+                emit_asr_status(&app, source, AsrState::Stopped, engine_id, None);
+            }
+
+            tracing::debug!("live recognise thread finished");
+        })
+}
+
+/// One caption, from words a live socket sent.
+#[allow(clippy::too_many_arguments)]
+fn segment(
+    session_id: Uuid,
+    source: AudioSourceKind,
+    language: Language,
+    engine: &str,
+    start_ms: i64,
+    end_ms: i64,
+    text: String,
+    is_final: bool,
+) -> TranscriptSegment {
+    TranscriptSegment {
+        id: Uuid::new_v4(),
+        session_id,
+        source,
+        speaker: Some(source.default_label().to_owned()),
+        start_ms,
+        end_ms,
+        text,
+        language,
+        // Gemini reports no per-sentence confidence over the socket.
+        confidence: None,
+        is_final,
+        engine: engine.to_owned(),
+    }
+}
+
+/// Save a segment when it is final, and publish it either way.
+fn publish(
+    app: &AppHandle,
+    segment: TranscriptSegment,
+    writer: Option<&mut crate::transcript_store::SessionWriter>,
+) {
+    if segment.is_empty_speech() {
+        tracing::debug!(source = ?segment.source, "dropped a silence hallucination");
+        return;
+    }
+
+    if !segment.is_final {
+        app.emit(events::TRANSCRIPT_PARTIAL, &segment).ok();
+        return;
+    }
+
+    tracing::debug!(
+        source = ?segment.source,
+        chars = segment.text.chars().count(),
+        "final segment recognised"
+    );
+
+    if let Some(Err(error)) = writer.map(|file| file.append(&segment)) {
+        tracing::error!(%error, "a segment could not be saved");
+        app.emit(
+            events::DIAGNOSTIC_WARNING,
+            DiagnosticWarning {
+                kind: "transcript.write_failed".to_owned(),
+                message:
+                    "Audis could not save part of this transcript. Captions are still working."
+                        .to_owned(),
+            },
+        )
+        .ok();
+    }
+
+    app.emit(events::TRANSCRIPT_FINAL, &segment).ok();
 }
 
 /// What the recognise thread needs to run.
@@ -1014,6 +1512,37 @@ fn no_session() -> AudisError {
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// Live timestamps are counted in audio, not in wall time, so that a
+    /// paused session leaves no gap and a segment lines up with the recording.
+    #[test]
+    fn live_timestamps_count_the_audio_that_was_sent() {
+        assert_eq!(samples_to_ms(0), 0);
+        assert_eq!(samples_to_ms(16_000), 1_000);
+        assert_eq!(samples_to_ms(8_000), 500);
+    }
+
+    #[test]
+    fn a_live_segment_spans_from_the_first_word_to_the_last() {
+        let segment = segment(
+            Uuid::new_v4(),
+            AudioSourceKind::ComputerAudio,
+            Language::Indonesian,
+            audis_asr::live::ENGINE_ID,
+            1_200,
+            4_800,
+            "selamat pagi".to_owned(),
+            true,
+        );
+
+        assert_eq!(segment.start_ms, 1_200);
+        assert_eq!(segment.end_ms, 4_800);
+        assert!(segment.is_final);
+        assert_eq!(segment.engine, "gemini-live");
+        // The socket reports no per-sentence confidence, and inventing one
+        // would put a number in the transcript that means nothing.
+        assert_eq!(segment.confidence, None);
+    }
 
     /// A session with no device open reports nothing.
     #[test]

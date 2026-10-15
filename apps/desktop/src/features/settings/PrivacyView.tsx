@@ -1,20 +1,23 @@
 import { GroupedList, Row } from "@/components/GroupedList";
+import { Page } from "@/components/Page";
 
 /** What Audis does and does not do with your audio. */
 export function PrivacyView() {
   return (
-    <div className="flex flex-col gap-8">
+    <Page title="Privacy" subtitle="What Audis does with your audio, and what it never does.">
       <GroupedList
         title="What Audis does today"
-        footnote="Audis has no audio capture yet, so nothing is being recorded or sent anywhere."
+        footnote="Audis listens only while a session you started is running, and says so on screen the whole time."
       >
         <Row
           label="Audio captured"
-          value={<span style={{ color: "var(--color-success)" }}>None</span>}
+          description="Your microphone and computer audio, only during a session you start."
+          value={<span style={{ color: "var(--color-success)" }}>On request</span>}
         />
         <Row
           label="Data sent off this PC"
-          value={<span style={{ color: "var(--color-success)" }}>None</span>}
+          description="Audio goes to a provider only if you pick a cloud speech engine; transcript text only if the assistant is on."
+          value={<span style={{ color: "var(--color-success)" }}>Your choice</span>}
         />
         <Row
           label="Analytics"
@@ -56,6 +59,6 @@ export function PrivacyView() {
           description="You are responsible for obtaining any consent required where you record."
         />
       </GroupedList>
-    </div>
+    </Page>
   );
 }

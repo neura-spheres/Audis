@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+
 import { ErrorNotice } from "@/components/ErrorNotice";
-import { Button } from "@/components/controls";
-import { DownloadIcon, TrashIcon } from "@/components/icons";
+import { IconBadge } from "@/components/IconBadge";
+import { Section } from "@/components/Page";
+import { Badge, Button } from "@/components/controls";
+import { ChipIcon, DownloadIcon, TrashIcon } from "@/components/icons";
 import { AUDIS_EVENTS, subscribe } from "@/services/events";
 import {
   cancelModelDownload,
   installModel,
   isModelDownloading,
-  listModels,
   removeModel,
   AudisIpcError,
 } from "@/services/ipc";
@@ -20,19 +22,21 @@ import {
 } from "@/schemas/ipc";
 import { formatBytes } from "@/lib/format";
 
-/** Install and remove local speech models. */
-export function ModelsView() {
-  const [models, setModels] = useState<InstalledModel[]>();
+/**
+ * Install and remove local speech models.
+ *
+ * The list belongs to the Speech page, which shares it with the engine picker,
+ * so `onChanged` is how an install or removal reaches both.
+ */
+export function ModelsSection({
+  models,
+  onChanged,
+}: {
+  models: InstalledModel[] | undefined;
+  onChanged: () => void;
+}) {
   const [progress, setProgress] = useState<ModelProgress>();
   const [error, setError] = useState<UserFacingError>();
-
-  const refresh = useCallback(() => {
-    listModels()
-      .then(setModels)
-      .catch((cause: unknown) => setError(toUserFacing(cause)));
-  }, []);
-
-  useEffect(refresh, [refresh]);
 
   useEffect(() => {
     isModelDownloading()
@@ -58,7 +62,7 @@ export function ModelsView() {
 
       if (parsed.data.done || parsed.data.error) {
         setProgress(undefined);
-        refresh();
+        onChanged();
         if (parsed.data.error) {
           setError({
             title: "The model could not be installed",
@@ -74,7 +78,7 @@ export function ModelsView() {
 
       setProgress(parsed.data);
     });
-  }, [refresh]);
+  }, [onChanged]);
 
   const install = (id: ModelId) => {
     setError(undefined);
@@ -84,38 +88,50 @@ export function ModelsView() {
         setProgress(undefined);
         setError(toUserFacing(cause));
       })
-      .finally(refresh);
+      .finally(onChanged);
   };
 
   const remove = (id: ModelId) => {
     removeModel(id)
-      .then(refresh)
+      .then(onChanged)
       .catch((cause: unknown) => setError(toUserFacing(cause)));
   };
 
   return (
-    <div className="flex flex-col gap-5">
+    <Section
+      id="models"
+      title="On-device models"
+      footnote="Free, offline, and no account needed. Bigger models are more accurate and need a faster PC."
+    >
       {error ? <ErrorNotice error={error} /> : null}
 
-      <p className="px-1 text-subheadline" style={{ color: "var(--label-secondary)" }}>
-        Speech models run on this PC. They are free, work offline, and need no account. Audis
-        recognises Indonesian and English.
-      </p>
-
-      <div className="flex flex-col gap-3">
-        {(models ?? []).map((model) => (
-          <ModelCard
-            key={model.info.id}
-            model={model}
-            progress={progress?.id === model.info.id ? progress : undefined}
-            busy={progress !== undefined}
-            onInstall={() => install(model.info.id)}
-            onRemove={() => remove(model.info.id)}
-            onCancel={() => void cancelModelDownload().catch(() => undefined)}
-          />
-        ))}
+      <div
+        className="flex flex-col overflow-hidden"
+        style={{
+          background: "var(--surface-content)",
+          borderRadius: "var(--radius-card)",
+          boxShadow: "var(--shadow-card)",
+        }}
+      >
+        {models === undefined
+          ? [0, 1].map((index) => (
+              <div key={index} className="p-3.5">
+                <div className="audis-skeleton h-10" />
+              </div>
+            ))
+          : models.map((model) => (
+              <ModelCard
+                key={model.info.id}
+                model={model}
+                progress={progress?.id === model.info.id ? progress : undefined}
+                busy={progress !== undefined}
+                onInstall={() => install(model.info.id)}
+                onRemove={() => remove(model.info.id)}
+                onCancel={() => void cancelModelDownload().catch(() => undefined)}
+              />
+            ))}
       </div>
-    </div>
+    </Section>
   );
 }
 
@@ -138,56 +154,33 @@ function ModelCard({
   const downloading = progress !== undefined;
 
   return (
-    <section
-      className="flex flex-col gap-3 p-4"
-      style={{
-        background: "var(--surface-content)",
-        borderRadius: "var(--radius-card)",
-        boxShadow: "var(--shadow-card)",
-      }}
-    >
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex min-w-0 flex-col gap-1">
-          <div className="flex items-center gap-2">
-            <h2 className="text-body font-semibold">{info.name}</h2>
-            {info.recommended ? (
-              <span
-                className="px-1.5 py-0.5 text-caption2 font-medium"
-                style={{
-                  background: "color-mix(in srgb, var(--color-accent) 15%, transparent)",
-                  borderRadius: "var(--radius-chip)",
-                  color: "var(--color-accent)",
-                }}
-              >
-                Recommended
-              </span>
-            ) : null}
-            {model.installed ? (
-              <span className="text-caption2 font-medium" style={{ color: "var(--color-success)" }}>
-                Installed
-              </span>
-            ) : null}
-
-            {!info.keepsUpLive ? (
-              <span
-                className="px-1.5 py-0.5 text-caption2 font-medium"
-                style={{
-                  background: "color-mix(in srgb, var(--color-warning) 18%, transparent)",
-                  borderRadius: "var(--radius-chip)",
-                  color: "var(--color-warning)",
-                }}
-                title="This model decodes slower than people speak, so live captions fall behind and never catch up."
-              >
-                Too slow for live
-              </span>
-            ) : null}
+    <div className="audis-row flex flex-col gap-2.5 px-3.5 py-3" data-inset="icon">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <IconBadge tint={model.installed ? "purple" : "gray"} size={30}>
+            <ChipIcon />
+          </IconBadge>
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-subheadline font-semibold">{info.name}</span>
+              {info.recommended ? <Badge tone="accent">Recommended</Badge> : null}
+              {model.installed ? <Badge tone="success">Installed</Badge> : null}
+              {!info.keepsUpLive ? (
+                <Badge
+                  tone="warning"
+                  title="This model decodes slower than people speak, so live captions fall behind and never catch up."
+                >
+                  Too slow for live
+                </Badge>
+              ) : null}
+            </div>
+            <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
+              {info.summary}
+            </span>
+            <span className="text-caption1" style={{ color: "var(--label-tertiary)" }}>
+              {formatBytes(model.installedBytes ?? info.sizeBytes)} · {info.requirement}
+            </span>
           </div>
-          <p className="text-subheadline" style={{ color: "var(--label-secondary)" }}>
-            {info.summary}
-          </p>
-          <p className="text-footnote" style={{ color: "var(--label-tertiary)" }}>
-            {formatBytes(model.installedBytes ?? info.sizeBytes)} · {info.requirement}
-          </p>
         </div>
 
         <div className="flex shrink-0 gap-2">
@@ -215,7 +208,7 @@ function ModelCard({
       </div>
 
       {downloading ? <DownloadProgress progress={progress} fallbackTotal={info.sizeBytes} /> : null}
-    </section>
+    </div>
   );
 }
 
@@ -241,11 +234,12 @@ function DownloadProgress({
         aria-label="Download progress"
       >
         <div
-          className="h-full transition-[width]"
+          className="h-full"
           style={{
             width: `${fraction * 100}%`,
             background: "var(--color-accent)",
-            transitionDuration: "var(--duration-standard)",
+            borderRadius: "var(--radius-chip)",
+            transition: "width var(--spring-smooth-duration) var(--spring-smooth)",
           }}
         />
       </div>

@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 
+import type { Navigate } from "@/app/navigation";
+import { Collapse } from "@/components/Collapse";
 import { ErrorNotice } from "@/components/ErrorNotice";
-import { Button, Switch } from "@/components/controls";
+import { GroupedList, Row } from "@/components/GroupedList";
+import { IconBadge } from "@/components/IconBadge";
+import { AiIcon, CheckIcon } from "@/components/icons";
+import { Page, Section } from "@/components/Page";
+import { Button, Select, Switch, TextField, fieldStyle } from "@/components/controls";
 import { useSettings } from "@/hooks/useSettings";
 import { askAssistant, listProviderModels, listProviders } from "@/services/ipc";
 import type { AssistantContext, ProviderId, ProviderStatus } from "@/schemas/ipc";
@@ -16,7 +22,7 @@ const CONTEXTS: { id: AssistantContext; label: string; hint: string }[] = [
   { id: "lecture", label: "Lecture", hint: "Answers questions and clarifies concepts." },
 ];
 
-export function AssistantView() {
+export function AssistantView({ onNavigate }: { onNavigate: Navigate }) {
   const { settings, error, update } = useSettings();
   const [providers, setProviders] = useState<ProviderStatus[]>();
 
@@ -39,52 +45,53 @@ export function AssistantView() {
     update((current) => ({ ...current, assistant: { ...current.assistant, ...patch } }));
 
   return (
-    <div className="flex flex-col gap-6">
-      <section className="flex flex-col gap-3">
-        <div
-          className="flex items-center justify-between gap-4 p-3"
-          style={{
-            background: "var(--surface-content)",
-            borderRadius: "var(--radius-card)",
-            boxShadow: "var(--shadow-card)",
-          }}
-        >
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <span className="text-subheadline font-semibold">
-              Answer questions during a session
+    <Page
+      title="AI Assistant"
+      subtitle="Answers questions as they come up in a session, using the AI provider you choose."
+    >
+      <GroupedList
+        footnote={
+          a.enabled && providers !== undefined && keyed.length === 0 ? (
+            <span className="flex items-center justify-between gap-3">
+              <span style={{ color: "var(--color-warning)" }}>
+                No provider has a key yet. Groq and Gemini both have free tiers.
+              </span>
+              <Button variant="tinted" onClick={() => onNavigate("providers")}>
+                Add a key
+              </Button>
             </span>
-            <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
-              When on, Audis sends the recent transcript to your provider to answer questions as
-              they come up. Off means nothing is sent.
-            </span>
-          </div>
-          <Switch
-            label="Enable the assistant"
-            checked={a.enabled}
-            onChange={(v) => set({ enabled: v })}
-          />
-        </div>
+          ) : (
+            "Off means nothing is sent. When on, the recent transcript goes to your provider only when a question needs answering."
+          )
+        }
+      >
+        <Row
+          icon={
+            <IconBadge tint="indigo" size={30}>
+              <AiIcon />
+            </IconBadge>
+          }
+          label="Answer questions during a session"
+          description="Sends the recent transcript to your provider to answer what people ask."
+          value={
+            <Switch
+              label="Enable the assistant"
+              checked={a.enabled}
+              onChange={(v) => set({ enabled: v })}
+            />
+          }
+        />
+      </GroupedList>
 
-        {a.enabled && keyed.length === 0 ? (
-          <p className="px-1 text-footnote" style={{ color: "var(--color-warning)" }}>
-            No provider has a key saved. Open Providers and add one for Groq or Gemini — both have
-            free tiers.
-          </p>
-        ) : null}
-      </section>
-
-      {a.enabled ? (
-        <>
-          <section className="flex flex-col gap-3">
-            <h2 className="px-1 text-subheadline font-semibold">Session context</h2>
-            <p className="px-1 text-footnote" style={{ color: "var(--label-secondary)" }}>
-              Tell the assistant what this session is before you start it. This shapes how it
-              answers.
-            </p>
-
-            <div className="flex flex-col gap-2">
+      <Collapse open={a.enabled}>
+        {a.enabled ? (
+          <div className="flex flex-col gap-7">
+            <GroupedList
+              title="This session is a…"
+              footnote="Set it before you start. It shapes how the assistant answers."
+            >
               {CONTEXTS.map((c) => (
-                <ContextCard
+                <ContextRow
                   key={c.id}
                   selected={a.context === c.id}
                   label={c.label}
@@ -92,68 +99,57 @@ export function AssistantView() {
                   onSelect={() => set({ context: c.id })}
                 />
               ))}
-            </div>
-          </section>
+            </GroupedList>
 
-          <section className="flex flex-col gap-2">
-            <h2 className="px-1 text-subheadline font-semibold">What should the AI know?</h2>
-            <p className="px-1 text-footnote" style={{ color: "var(--label-secondary)" }}>
-              Type anything you want the assistant to keep in mind — the topic, who is speaking, the
-              role you are interviewing for, terms it should use. It is sent with every answer.
-            </p>
-            <textarea
-              value={a.notes}
-              onChange={(e) => set({ notes: e.target.value })}
-              rows={5}
-              placeholder={
-                'e.g. "This is a senior Rust interview at a fintech. I am the candidate. ' +
-                'Prefer concrete, technical answers."'
-              }
-              className="w-full resize-y px-3 py-2.5 text-footnote"
-              style={inputStyle}
-            />
-          </section>
-
-          <section className="flex flex-col gap-3">
-            <h2 className="px-1 text-subheadline font-semibold">Model</h2>
-            <ProviderRow
-              keyed={keyed}
-              provider={a.provider}
-              model={a.model}
-              onProvider={(provider) => {
-                const chosen = keyed.find((p) => p.info.id === provider);
-                set({ provider, model: chosen?.info.defaultModel ?? "" });
-              }}
-              onModel={(model) => set({ model })}
-            />
-            <div
-              className="flex items-center justify-between gap-4 p-3"
-              style={{
-                background: "var(--surface-content)",
-                borderRadius: "var(--radius-card)",
-                boxShadow: "var(--shadow-card)",
-              }}
+            <Section
+              title="What should the AI know?"
+              footnote="The topic, who is speaking, the role you are interviewing for, terms to use. Sent with every answer."
             >
-              <div className="flex min-w-0 flex-col gap-0.5">
-                <span className="text-subheadline">Answer my own questions too</span>
-                <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
-                  By default the assistant answers what other people say, not you.
-                </span>
-              </div>
-              <Switch
-                label="Answer my own questions"
-                checked={a.answerOwnQuestions}
-                onChange={(v) => set({ answerOwnQuestions: v })}
+              <textarea
+                value={a.notes}
+                onChange={(e) => set({ notes: e.target.value })}
+                rows={4}
+                aria-label="Notes for the assistant"
+                placeholder={
+                  'e.g. "This is a senior Rust interview at a fintech. I am the candidate. ' +
+                  'Prefer concrete, technical answers."'
+                }
+                className="w-full resize-y px-3 py-2.5 text-footnote"
+                style={{ ...fieldStyle, borderRadius: "var(--radius-card)" }}
               />
-            </div>
-          </section>
+            </Section>
 
-          <AskBox disabled={!hasKeyForChosen} />
-          <MeetingNotes />
-          <Feed />
-        </>
-      ) : null}
-    </div>
+            <GroupedList title="Model">
+              <ProviderRows
+                keyed={keyed}
+                provider={a.provider}
+                model={a.model}
+                onProvider={(provider) => {
+                  const chosen = keyed.find((p) => p.info.id === provider);
+                  set({ provider, model: chosen?.info.defaultModel ?? "" });
+                }}
+                onModel={(model) => set({ model })}
+              />
+              <Row
+                label="Answer my own questions too"
+                description="By default it answers what other people say, not you."
+                value={
+                  <Switch
+                    label="Answer my own questions"
+                    checked={a.answerOwnQuestions}
+                    onChange={(v) => set({ answerOwnQuestions: v })}
+                  />
+                }
+              />
+            </GroupedList>
+
+            <AskBox disabled={!hasKeyForChosen} />
+            <MeetingNotes />
+            <Feed />
+          </div>
+        ) : null}
+      </Collapse>
+    </Page>
   );
 }
 
@@ -168,8 +164,8 @@ function MeetingNotes() {
   if (!hasContent) return null;
 
   return (
-    <section className="flex flex-col gap-2">
-      <h2 className="px-1 text-subheadline font-semibold">Meeting notes</h2>
+    <section className="flex flex-col gap-2.5">
+      <h2 className="px-1 text-title3 font-semibold">Meeting notes</h2>
       <div
         data-selectable
         className="flex flex-col gap-3 p-3"
@@ -222,7 +218,8 @@ function NoteList({ title, items }: { title: string; items: string[] }) {
   );
 }
 
-function ContextCard({
+/** One choice in a list where exactly one is checked, as in System Settings. */
+function ContextRow({
   selected,
   label,
   hint,
@@ -236,34 +233,35 @@ function ContextCard({
   return (
     <button
       type="button"
+      role="radio"
+      aria-checked={selected}
       onClick={onSelect}
-      className="flex items-center gap-3 p-3 text-left"
-      style={{
-        background: "var(--surface-content)",
-        borderRadius: "var(--radius-card)",
-        boxShadow: "var(--shadow-card)",
-        outline: selected ? "1.5px solid var(--color-accent)" : "1.5px solid transparent",
-        outlineOffset: -1,
-      }}
+      className="audis-row audis-side-item flex w-full items-center gap-3 px-3.5 py-2.5 text-left"
     >
-      <span
-        aria-hidden
-        className="h-[16px] w-[16px] shrink-0 rounded-full"
-        style={{
-          border: selected ? "5px solid var(--color-accent)" : "1.5px solid var(--border-control)",
-        }}
-      />
-      <div className="flex min-w-0 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col">
         <span className="text-subheadline">{label}</span>
         <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
           {hint}
         </span>
       </div>
+      <span
+        aria-hidden
+        className="flex h-4 w-4 shrink-0 [&>svg]:h-full [&>svg]:w-full"
+        style={{
+          color: "var(--color-accent)",
+          opacity: selected ? 1 : 0,
+          transform: selected ? "scale(1)" : "scale(0.5)",
+          transition:
+            "opacity var(--duration-fast) var(--ease-standard), transform var(--spring-bouncy-duration) var(--spring-bouncy)",
+        }}
+      >
+        <CheckIcon />
+      </span>
     </button>
   );
 }
 
-function ProviderRow({
+function ProviderRows({
   keyed,
   provider,
   model,
@@ -315,50 +313,37 @@ function ProviderRow({
     model && valid.includes(model) ? valid : [...new Set([model, ...valid])].filter(Boolean);
 
   return (
-    <div
-      className="flex flex-col gap-3 p-3"
-      style={{
-        background: "var(--surface-content)",
-        borderRadius: "var(--radius-card)",
-        boxShadow: "var(--shadow-card)",
-      }}
-    >
-      <label className="flex items-center justify-between gap-3">
-        <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
-          Provider
-        </span>
-        <select
-          value={provider}
-          onChange={(e) => onProvider(e.target.value as ProviderId)}
-          className="px-2.5 py-[5px] text-footnote"
-          style={inputStyle}
-        >
-          {keyed.length === 0 ? <option value={provider}>{provider}</option> : null}
-          {keyed.map((p) => (
-            <option key={p.info.id} value={p.info.id}>
-              {p.info.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="flex items-center justify-between gap-3">
-        <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
-          Model
-        </span>
-        <select
-          value={model}
-          onChange={(e) => onModel(e.target.value)}
-          className="px-2.5 py-[5px] text-footnote"
-          style={inputStyle}
-        >
-          {options.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
-      </label>
-    </div>
+    <>
+      <Row
+        label="Provider"
+        value={
+          <Select
+            value={provider}
+            onChange={(value) => onProvider(value as ProviderId)}
+            label="Provider"
+          >
+            {keyed.length === 0 ? <option value={provider}>{provider}</option> : null}
+            {keyed.map((p) => (
+              <option key={p.info.id} value={p.info.id}>
+                {p.info.name}
+              </option>
+            ))}
+          </Select>
+        }
+      />
+      <Row
+        label="Model"
+        value={
+          <Select value={model} onChange={onModel} label="Model">
+            {options.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </Select>
+        }
+      />
+    </>
   );
 }
 
@@ -381,25 +366,21 @@ function AskBox({ disabled }: { disabled: boolean }) {
   };
 
   return (
-    <section className="flex flex-col gap-2">
-      <h2 className="px-1 text-subheadline font-semibold">Ask anything</h2>
+    <Section title="Ask anything">
       <div className="flex items-center gap-2">
-        <input
+        <TextField
           value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") ask();
-          }}
+          onChange={setText}
+          onEnter={ask}
+          label="Question for the assistant"
           placeholder={disabled ? "Add a key for this provider first" : "Type a question…"}
           disabled={disabled}
-          className="w-full px-2.5 py-[7px] text-footnote"
-          style={inputStyle}
         />
         <Button onClick={ask} disabled={disabled || !text.trim()} variant="accent">
           Ask
         </Button>
       </div>
-    </section>
+    </Section>
   );
 }
 
@@ -408,26 +389,25 @@ function Feed() {
   if (feed.length === 0) return null;
 
   return (
-    <section className="flex flex-col gap-2">
-      <h2 className="px-1 text-subheadline font-semibold">Answers</h2>
+    <section className="flex flex-col gap-2.5">
+      <h2 className="px-1 text-title3 font-semibold">Answers</h2>
       {[...feed].reverse().map((entry) => (
         <div
           key={entry.id}
-          className="flex flex-col gap-1.5 p-3"
+          className="flex flex-col gap-1.5 p-3.5"
           data-selectable
           style={{
             background: "var(--surface-content)",
             borderRadius: "var(--radius-card)",
             boxShadow: "var(--shadow-card)",
+            animation: "audis-rise var(--spring-smooth-duration) var(--spring-smooth) both",
           }}
         >
-          <span className="text-footnote font-medium" style={{ color: "var(--label-secondary)" }}>
+          <span className="text-footnote font-semibold" style={{ color: "var(--label-secondary)" }}>
             {entry.question}
           </span>
           {entry.pending ? (
-            <span className="text-subheadline" style={{ color: "var(--label-tertiary)" }}>
-              Thinking…
-            </span>
+            <span className="audis-skeleton h-4 w-2/3" />
           ) : entry.error ? (
             <span className="text-subheadline" style={{ color: "var(--color-danger)" }}>
               Could not answer.
@@ -445,10 +425,3 @@ function Feed() {
     </section>
   );
 }
-
-const inputStyle = {
-  background: "var(--surface-elevated)",
-  color: "var(--label-primary)",
-  border: "0.5px solid var(--border-control)",
-  borderRadius: "var(--radius-control)",
-} as const;

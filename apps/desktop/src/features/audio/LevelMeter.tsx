@@ -21,8 +21,11 @@ export function LevelMeter({ level }: { level: AudioLevelEvent | undefined }) {
           className="absolute inset-y-0 left-0"
           style={{
             width: `${rms * 100}%`,
-            background: clipping ? "var(--color-danger)" : "var(--color-success)",
+            background: clipping
+              ? "var(--color-danger)"
+              : "linear-gradient(90deg, var(--color-success) 70%, var(--color-warning))",
             borderRadius: "var(--radius-chip)",
+            transition: "width 80ms linear",
           }}
         />
         {peak > 0.01 ? (
@@ -30,6 +33,7 @@ export function LevelMeter({ level }: { level: AudioLevelEvent | undefined }) {
             className="absolute inset-y-0 w-[2px]"
             style={{
               left: `calc(${Math.min(peak, 1) * 100}% - 1px)`,
+              transition: "left 120ms linear",
               background: clipping ? "var(--color-danger)" : "var(--label-secondary)",
             }}
           />

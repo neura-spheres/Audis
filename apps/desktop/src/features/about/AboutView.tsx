@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import { GroupedList, Row } from "@/components/GroupedList";
-import { Button, SegmentedControl, Switch } from "@/components/controls";
+import { Badge, Button, SegmentedControl, Switch } from "@/components/controls";
+import { DiagnosticsSection } from "@/features/settings/DiagnosticsView";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import { useSettings } from "@/hooks/useSettings";
 import { ErrorNotice } from "@/components/ErrorNotice";
@@ -27,12 +28,20 @@ export function AboutView() {
   const placeholder = "Unknown";
 
   return (
-    <div className="flex flex-col gap-8">
-      <header className="flex flex-col items-center gap-3 pt-6 pb-2">
-        <Wordmark size={56} />
+    <div className="audis-stagger flex flex-col gap-7">
+      <header className="flex flex-col items-center gap-3 pt-2 pb-2">
+        <span
+          className="block"
+          style={{
+            filter: "drop-shadow(0 10px 24px rgb(0 0 0 / 0.18))",
+            animation: "audis-pop-up var(--spring-bouncy-duration) var(--spring-bouncy) both",
+          }}
+        >
+          <Wordmark size={88} />
+        </span>
         <div className="flex flex-col items-center gap-1">
           <h1
-            className="text-title1 font-semibold"
+            className="text-large-title font-bold"
             style={{ letterSpacing: "var(--tracking-tighter)" }}
           >
             {info?.appName ?? "Audis"}
@@ -53,6 +62,8 @@ export function AboutView() {
         <Row label="Company" value={info?.company ?? placeholder} />
         <Row label="Bundle identifier" value={info?.bundleId ?? placeholder} />
       </GroupedList>
+
+      <DiagnosticsSection />
 
       <GroupedList
         title="Legal"
@@ -125,53 +136,36 @@ function Updates() {
 
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="px-1 text-subheadline font-semibold">Updates</h2>
-
-      <div
-        className="flex flex-col gap-3 p-3"
-        style={{
-          background: "var(--surface-content)",
-          borderRadius: "var(--radius-card)",
-          boxShadow: "var(--shadow-card)",
-        }}
-      >
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <span className="text-subheadline">Release channel</span>
-            <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
-              Betas ship earlier and are less tested. You are moved back to a finished release as
-              soon as one is newer than the beta you are on.
-            </span>
-          </div>
-          <SegmentedControl<UpdateChannel>
-            label="Release channel"
-            value={updates.channel}
-            options={[
-              { id: "stable", label: "Stable" },
-              { id: "beta", label: "Beta" },
-            ]}
-            onChange={(channel) => set({ channel })}
-          />
-        </div>
-
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <span className="text-subheadline">Check when Audis starts</span>
-            <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
-              Asks GitHub whether a newer version exists. Nothing is downloaded or installed without
-              you.
-            </span>
-          </div>
-          <Switch
-            label="Check for updates on startup"
-            checked={updates.checkOnStartup}
-            onChange={(checkOnStartup) => set({ checkOnStartup })}
-          />
-        </div>
-
-        <div className="flex items-center justify-between gap-4">
-          <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
-            {checking
+      <GroupedList title="Updates">
+        <Row
+          label="Release channel"
+          description="Betas ship earlier and are less tested. You move back to a finished release as soon as one is newer."
+          value={
+            <SegmentedControl<UpdateChannel>
+              label="Release channel"
+              value={updates.channel}
+              options={[
+                { id: "stable", label: "Stable" },
+                { id: "beta", label: "Beta" },
+              ]}
+              onChange={(channel) => set({ channel })}
+            />
+          }
+        />
+        <Row
+          label="Check when Audis starts"
+          description="Asks GitHub whether a newer version exists. Nothing is installed without you."
+          value={
+            <Switch
+              label="Check for updates on startup"
+              checked={updates.checkOnStartup}
+              onChange={(checkOnStartup) => set({ checkOnStartup })}
+            />
+          }
+        />
+        <Row
+          label={
+            checking
               ? "Checking…"
               : failed
                 ? failed
@@ -179,29 +173,30 @@ function Updates() {
                   ? result.update
                     ? `Version ${result.update.version} is available.`
                     : "Audis is up to date."
-                  : "Not checked yet."}
-          </span>
-          <Button onClick={check} disabled={checking}>
-            Check now
-          </Button>
-        </div>
-      </div>
+                  : "Not checked yet."
+          }
+          value={
+            <Button onClick={check} disabled={checking}>
+              Check now
+            </Button>
+          }
+        />
+      </GroupedList>
 
       {result?.update ? (
         <div
-          className="flex flex-col gap-2 p-3"
+          className="flex flex-col gap-2 p-3.5"
           style={{
             background: "var(--surface-content)",
             borderRadius: "var(--radius-card)",
-            boxShadow: "var(--shadow-card)",
-            outline: "1.5px solid var(--color-accent)",
-            outlineOffset: -1,
+            boxShadow: "0 0 0 2px var(--color-accent), var(--shadow-card)",
+            animation: "audis-pop-up var(--spring-bouncy-duration) var(--spring-bouncy) both",
           }}
         >
           <div className="flex items-center justify-between gap-3">
-            <span className="text-subheadline font-semibold">
+            <span className="flex items-center gap-2 text-subheadline font-semibold">
               {result.update.version}
-              {result.update.prerelease ? " (beta)" : ""}
+              {result.update.prerelease ? <Badge tone="warning">Beta</Badge> : null}
             </span>
             <div className="flex shrink-0 items-center gap-2">
               <Button onClick={() => void openReleasePage(result.update!.url)}>

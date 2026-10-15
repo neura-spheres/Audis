@@ -1,5 +1,6 @@
 import { GroupedList, Row } from "@/components/GroupedList";
 import { ErrorNotice } from "@/components/ErrorNotice";
+import { Page } from "@/components/Page";
 import { SegmentedControl, Switch } from "@/components/controls";
 import { useSettings } from "@/hooks/useSettings";
 import type { CloseBehavior, StartPage, ThemePreference } from "@/schemas/ipc";
@@ -11,7 +12,7 @@ export function GeneralView() {
   if (error && !settings) return <ErrorNotice error={error} />;
 
   return (
-    <div className="flex flex-col gap-8">
+    <Page title="General" subtitle="How Audis looks, where it opens, and what closing it does.">
       {error ? <ErrorNotice error={error} /> : null}
 
       <GroupedList title="Appearance">
@@ -45,10 +46,10 @@ export function GeneralView() {
           value={
             <SegmentedControl<StartPage>
               label="Start page"
-              value={settings?.general.startPage ?? "dashboard"}
+              value={settings?.general.startPage ?? "home"}
               options={[
-                { id: "dashboard", label: "Dashboard" },
-                { id: "sessions", label: "Sessions" },
+                { id: "home", label: "Home" },
+                { id: "library", label: "Library" },
               ]}
               onChange={(startPage) =>
                 void update((current) => ({
@@ -101,6 +102,6 @@ export function GeneralView() {
           }
         />
       </GroupedList>
-    </div>
+    </Page>
   );
 }

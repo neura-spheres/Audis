@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 
-import { formatBytes, formatWhen } from "./format";
+import { dayGroup, formatBytes, formatClock, formatDuration, formatWhen } from "./format";
 
 describe("formatBytes", () => {
   it("formats each unit the way File Explorer does", () => {
@@ -48,5 +48,35 @@ describe("formatWhen", () => {
   it("returns nothing for a missing or unparseable stamp", () => {
     expect(formatWhen(null)).toBe("");
     expect(formatWhen("not a date")).toBe("");
+  });
+});
+
+describe("formatClock", () => {
+  it("reads like a stopwatch and grows an hour field only when needed", () => {
+    expect(formatClock(0)).toBe("0:00");
+    expect(formatClock(7_400)).toBe("0:07");
+    expect(formatClock(272_000)).toBe("4:32");
+    expect(formatClock(3_729_000)).toBe("1:02:09");
+    expect(formatClock(-5)).toBe("0:00");
+  });
+});
+
+describe("formatDuration", () => {
+  it("keeps short sessions short and long ones readable", () => {
+    expect(formatDuration(45_000)).toBe("45s");
+    expect(formatDuration(724_000)).toBe("12m 04s");
+    expect(formatDuration(3_720_000)).toBe("1h 02m");
+  });
+});
+
+describe("dayGroup", () => {
+  const now = new Date(2026, 9, 15, 12, 0, 0);
+
+  it("groups by calendar day, not by 24-hour windows", () => {
+    expect(dayGroup(new Date(2026, 9, 15, 0, 5).toISOString(), now)).toBe("Today");
+    expect(dayGroup(new Date(2026, 9, 14, 23, 55).toISOString(), now)).toBe("Yesterday");
+    expect(dayGroup(new Date(2026, 9, 11, 9, 0).toISOString(), now)).toBe("This Week");
+    expect(dayGroup(new Date(2026, 7, 2, 9, 0).toISOString(), now)).toContain("2026");
+    expect(dayGroup("not a date", now)).toBe("Earlier");
   });
 });

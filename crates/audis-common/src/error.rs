@@ -47,6 +47,17 @@ pub enum AudisError {
         /// Why it was rejected.
         detail: String,
     },
+
+    /// A lower layer failed and already explained itself in words a user can
+    /// read.
+    ///
+    /// Carried through unchanged rather than flattened into
+    /// [`AudisError::Configuration`]. A speech engine knows the difference
+    /// between a rejected key, an exhausted quota and a dead network, and says
+    /// so; describing all three as a configuration file that could not be read
+    /// throws that away and sends the user to check their storage location.
+    #[error("{}", .0.title)]
+    Engine(Box<UserFacingError>),
 }
 
 /// A stable code shown to users and written to logs, so support can map a
@@ -102,6 +113,9 @@ impl AudisError {
         let technical_details = Some(self.to_string());
 
         match self {
+            // Already in the user's language, by whoever knew what went wrong.
+            AudisError::Engine(facing) => (**facing).clone(),
+
             AudisError::Configuration { .. } => UserFacingError {
                 title: "Audis could not read its configuration".to_owned(),
                 explanation: "A setting could not be understood, so Audis used its defaults \

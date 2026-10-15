@@ -3,11 +3,11 @@
 /*
  * Audis design foundation.
  *
- * Restraint over decoration: a strict type scale, hairline separators instead
- * of boxes, layered neutral surfaces instead of drop shadows, and one accent
- * colour. Audis runs for hours while someone listens to another person, so the
- * interface must never compete with that. No gradients, no animated
- * backgrounds, no decorative motion.
+ * Modelled on macOS: a translucent source list, grouped inset content, one
+ * accent colour, and motion driven by springs rather than fixed curves. Audis
+ * runs for hours while someone listens to another person, so motion answers an
+ * action and then gets out of the way: nothing loops except the one thing that
+ * must never be ambiguous, that Audis is listening.
  */
 
 @theme {
@@ -44,16 +44,191 @@
 
   /* CSS cannot express continuous curvature, so these approximate it.
    * Oversized radii read as Material rather than macOS. */
-  --radius-control: 6px;
-  --radius-card: 10px;
+  --radius-control: 7px;
+  --radius-card: 12px;
+  --radius-tile: 16px;
   --radius-window: 12px;
   --radius-chip: 999px;
 
-  /* One easing curve, two durations. Motion confirms an action, it does not
-   * entertain. */
+  /* Fallback curves, for an engine without `linear()`. The springs below
+   * replace them wherever they can be expressed. */
   --ease-standard: cubic-bezier(0.32, 0.72, 0, 1);
   --duration-fast: 140ms;
   --duration-standard: 220ms;
+}
+
+/*
+ * Springs.
+ *
+ * Sampled from a damped harmonic oscillator with SwiftUI's own parameters
+ * (response, damping fraction), so the motion has the same feel as a native
+ * Apple spring: fast to start, long soft settle, no visible end. The durations
+ * are how long the spring takes to come to rest; the movement anyone notices is
+ * over in well under half of that.
+ */
+:root {
+  --spring-smooth: var(--ease-standard);
+  --spring-snappy: var(--ease-standard);
+  --spring-bouncy: var(--ease-standard);
+  --spring-gentle: var(--ease-standard);
+
+  /* response 0.5, damping 1: no overshoot. Pages, fades, anything large. */
+  --spring-smooth-duration: 800ms;
+  /* response 0.36, damping 0.86: quick, with the faintest overshoot. Controls. */
+  --spring-snappy-duration: 540ms;
+  /* response 0.5, damping 0.72: a visible settle. Things that arrive. */
+  --spring-bouncy-duration: 860ms;
+  /* response 0.7, damping 1: slow and soft. Background and ambient change. */
+  --spring-gentle-duration: 1120ms;
+}
+
+@supports (transition-timing-function: linear(0, 1)) {
+  :root {
+    --spring-smooth: linear(
+      0,
+      0.0382,
+      0.1287,
+      0.2358,
+      0.3462,
+      0.455,
+      0.549,
+      0.6309,
+      0.7007,
+      0.7613,
+      0.8091,
+      0.8482,
+      0.881,
+      0.9062,
+      0.9263,
+      0.9429,
+      0.9554,
+      0.9653,
+      0.973,
+      0.9793,
+      0.9839,
+      0.9876,
+      0.9905,
+      0.9927,
+      0.9944,
+      0.9957,
+      0.9967,
+      0.9975,
+      0.9981,
+      0.9985,
+      0.9989,
+      0.9991,
+      0.9994,
+      1
+    );
+    --spring-snappy: linear(
+      0,
+      0.0344,
+      0.1214,
+      0.2269,
+      0.3398,
+      0.4569,
+      0.5584,
+      0.6482,
+      0.7298,
+      0.7935,
+      0.8456,
+      0.8896,
+      0.9217,
+      0.9464,
+      0.9659,
+      0.9792,
+      0.9887,
+      0.9955,
+      0.9998,
+      1.0024,
+      1.0039,
+      1.0045,
+      1.0046,
+      1.0044,
+      1.004,
+      1.0035,
+      1.0029,
+      1.0024,
+      1.0019,
+      1.0015,
+      1.0012,
+      1.0009,
+      1.0007,
+      1
+    );
+    --spring-bouncy: linear(
+      0,
+      0.0465,
+      0.1562,
+      0.3017,
+      0.4485,
+      0.5867,
+      0.7078,
+      0.8081,
+      0.8894,
+      0.9474,
+      0.988,
+      1.0143,
+      1.0299,
+      1.0366,
+      1.0377,
+      1.0352,
+      1.0306,
+      1.025,
+      1.0195,
+      1.0144,
+      1.01,
+      1.0064,
+      1.0035,
+      1.0015,
+      1.0002,
+      0.9993,
+      0.9988,
+      0.9986,
+      0.9986,
+      0.9987,
+      0.9989,
+      0.9991,
+      0.9993,
+      1
+    );
+    --spring-gentle: linear(
+      0,
+      0.0387,
+      0.1264,
+      0.2346,
+      0.3462,
+      0.4521,
+      0.5475,
+      0.6305,
+      0.7012,
+      0.7586,
+      0.8075,
+      0.8473,
+      0.8795,
+      0.9053,
+      0.9258,
+      0.9421,
+      0.9549,
+      0.965,
+      0.9729,
+      0.9791,
+      0.9838,
+      0.9876,
+      0.9904,
+      0.9927,
+      0.9944,
+      0.9956,
+      0.9967,
+      0.9975,
+      0.9981,
+      0.9985,
+      0.9989,
+      0.9991,
+      0.9993,
+      1
+    );
+  }
 }
 
 /*
@@ -70,29 +245,47 @@
     --color-danger: #ff3b30;
     --color-success: #34c759;
     --color-warning: #ff9500;
+    --accent-soft: color-mix(in srgb, var(--color-accent) 12%, transparent);
 
     /* The one saturated colour in the product: the user must never be unsure
      * whether Audis is listening. */
     --color-listening: #ff3b30;
 
-    --surface-window: #f2f2f7;
+    /* Apple's system palette, for the icon squares in the sidebar and tiles. */
+    --tint-blue: #007aff;
+    --tint-indigo: #5856d6;
+    --tint-purple: #af52de;
+    --tint-pink: #ff2d55;
+    --tint-red: #ff3b30;
+    --tint-orange: #ff9500;
+    --tint-yellow: #ffcc00;
+    --tint-green: #34c759;
+    --tint-teal: #30b0c7;
+    --tint-gray: #8e8e93;
+
+    --surface-window: #f5f5f7;
+    --surface-sidebar: rgb(232 232 237 / 0.86);
+    --surface-toolbar: rgb(245 245 247 / 0.78);
     --surface-content: #ffffff;
     --surface-elevated: #ffffff;
-    --surface-sunken: #e9e9ee;
-    --surface-hover: rgb(0 0 0 / 0.04);
+    --surface-sunken: #e8e8ed;
+    --surface-hover: rgb(0 0 0 / 0.045);
     --surface-active: rgb(0 0 0 / 0.08);
+    --surface-backdrop: rgb(0 0 0 / 0.22);
 
-    --label-primary: rgb(0 0 0 / 0.85);
-    --label-secondary: rgb(60 60 67 / 0.6);
-    --label-tertiary: rgb(60 60 67 / 0.3);
+    --label-primary: rgb(0 0 0 / 0.86);
+    --label-secondary: rgb(60 60 67 / 0.64);
+    --label-tertiary: rgb(60 60 67 / 0.34);
     --label-on-accent: #ffffff;
 
     --separator: rgb(60 60 67 / 0.14);
     --border-control: rgb(0 0 0 / 0.1);
 
     /* Shadows stay near-invisible; elevation comes from surface colour. */
-    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.04), 0 0 0 0.5px rgb(0 0 0 / 0.04);
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.04), 0 0 0 0.5px rgb(0 0 0 / 0.05);
+    --shadow-raised: 0 6px 18px rgb(0 0 0 / 0.08), 0 0 0 0.5px rgb(0 0 0 / 0.06);
     --shadow-overlay: 0 8px 28px rgb(0 0 0 / 0.12), 0 0 0 0.5px rgb(0 0 0 / 0.08);
+    --shadow-sheet: 0 24px 64px rgb(0 0 0 / 0.22), 0 0 0 0.5px rgb(0 0 0 / 0.1);
   }
 
   :root[data-theme="dark"] {
@@ -104,24 +297,41 @@
     --color-success: #30d158;
     --color-warning: #ff9f0a;
     --color-listening: #ff453a;
+    --accent-soft: color-mix(in srgb, var(--color-accent) 22%, transparent);
+
+    --tint-blue: #0a84ff;
+    --tint-indigo: #5e5ce6;
+    --tint-purple: #bf5af2;
+    --tint-pink: #ff375f;
+    --tint-red: #ff453a;
+    --tint-orange: #ff9f0a;
+    --tint-yellow: #ffd60a;
+    --tint-green: #30d158;
+    --tint-teal: #40c8e0;
+    --tint-gray: #8e8e93;
 
     --surface-window: #1c1c1e;
+    --surface-sidebar: rgb(40 40 43 / 0.9);
+    --surface-toolbar: rgb(28 28 30 / 0.78);
     --surface-content: #2c2c2e;
     --surface-elevated: #3a3a3c;
-    --surface-sunken: #000000;
+    --surface-sunken: #111113;
     --surface-hover: rgb(255 255 255 / 0.06);
     --surface-active: rgb(255 255 255 / 0.1);
+    --surface-backdrop: rgb(0 0 0 / 0.45);
 
     --label-primary: rgb(255 255 255 / 0.92);
-    --label-secondary: rgb(235 235 245 / 0.6);
-    --label-tertiary: rgb(235 235 245 / 0.3);
+    --label-secondary: rgb(235 235 245 / 0.62);
+    --label-tertiary: rgb(235 235 245 / 0.32);
     --label-on-accent: #ffffff;
 
     --separator: rgb(84 84 88 / 0.6);
     --border-control: rgb(255 255 255 / 0.14);
 
-    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.2);
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.24);
+    --shadow-raised: 0 8px 22px rgb(0 0 0 / 0.42);
     --shadow-overlay: 0 8px 28px rgb(0 0 0 / 0.44);
+    --shadow-sheet: 0 24px 64px rgb(0 0 0 / 0.6), 0 0 0 0.5px rgb(255 255 255 / 0.1);
   }
 
   html,
@@ -164,6 +374,11 @@
     cursor: text;
   }
 
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+
   :focus-visible {
     outline: 2px solid var(--color-accent);
     outline-offset: 2px;
@@ -173,19 +388,296 @@
     outline: none;
   }
 
+  /* Thin, overlay-style scrollbars like macOS: present, never loud. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--label-tertiary) transparent;
+  }
+
+  /* Reduce Motion: nothing moves. Delays go too, or staggered items would sit
+   * invisible for their delay and then pop in, which is worse than motion. */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
     *::after {
       animation-duration: 0.01ms !important;
+      animation-delay: 0ms !important;
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
+      transition-delay: 0ms !important;
       scroll-behavior: auto !important;
     }
   }
 
   ::selection {
     background-color: color-mix(in srgb, var(--color-accent) 28%, transparent);
+  }
+}
+
+/*
+ * Motion vocabulary for the main window. Each is used for one kind of change,
+ * so the same thing always moves the same way.
+ */
+@layer components {
+  /* A page arriving from the sidebar: rises a few pixels and fades in. */
+  .audis-page-in {
+    animation: audis-rise var(--spring-smooth-duration) var(--spring-smooth) both;
+  }
+
+  /* Drilling into something, and coming back out of it. */
+  .audis-push-in {
+    animation: audis-push var(--spring-smooth-duration) var(--spring-smooth) both;
+  }
+  .audis-pop-in {
+    animation: audis-pop var(--spring-smooth-duration) var(--spring-smooth) both;
+  }
+
+  /* Children arrive one after another. Capped, so a long list never makes the
+   * last item wait. */
+  .audis-stagger > * {
+    animation: audis-rise var(--spring-smooth-duration) var(--spring-smooth) both;
+  }
+  .audis-stagger > :nth-child(2) {
+    animation-delay: 35ms;
+  }
+  .audis-stagger > :nth-child(3) {
+    animation-delay: 70ms;
+  }
+  .audis-stagger > :nth-child(4) {
+    animation-delay: 105ms;
+  }
+  .audis-stagger > :nth-child(5) {
+    animation-delay: 140ms;
+  }
+  .audis-stagger > :nth-child(6) {
+    animation-delay: 175ms;
+  }
+  .audis-stagger > :nth-child(n + 7) {
+    animation-delay: 210ms;
+  }
+
+  /* Anything clickable that is not a plain row: it gives under the finger and
+   * springs back. */
+  .audis-pressable {
+    transition:
+      transform var(--spring-snappy-duration) var(--spring-snappy),
+      box-shadow var(--duration-standard) var(--ease-standard),
+      background-color var(--duration-fast) var(--ease-standard),
+      opacity var(--duration-fast) var(--ease-standard);
+  }
+  .audis-pressable:not(:disabled):active {
+    transform: scale(0.97);
+    transition-duration: 90ms;
+  }
+
+  /* Cards that open something lift towards the pointer. */
+  .audis-lift:not(:disabled):hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-raised);
+  }
+  .audis-lift:not(:disabled):active {
+    transform: translateY(0) scale(0.985);
+  }
+
+  /* A height that opens and closes without measuring: the grid row animates
+   * from 0fr to 1fr. */
+  .audis-collapse {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transition:
+      grid-template-rows var(--spring-smooth-duration) var(--spring-smooth),
+      opacity var(--duration-standard) var(--ease-standard);
+  }
+  .audis-collapse[data-open="true"] {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+  .audis-collapse > * {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* Rows in a grouped list. The hairline between two rows is inset to where
+   * the text starts, and there is never one above the first row. */
+  .audis-row {
+    position: relative;
+  }
+  .audis-row + .audis-row::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 14px;
+    height: 0.5px;
+    background: var(--separator);
+    pointer-events: none;
+  }
+  .audis-row[data-inset="icon"] + .audis-row::before,
+  .audis-row + .audis-row[data-inset="icon"]::before {
+    left: 52px;
+  }
+
+  /* Sidebar items. The selected one sits on the sliding highlight, so only the
+   * others react to the pointer. */
+  .audis-side-item:not([aria-current="page"]):hover {
+    background: var(--surface-hover);
+  }
+
+  /* Placeholder while something loads: a soft sheen, not a spinner. */
+  .audis-skeleton {
+    background: linear-gradient(
+      100deg,
+      var(--surface-sunken) 30%,
+      color-mix(in srgb, var(--surface-sunken) 55%, var(--surface-content)) 50%,
+      var(--surface-sunken) 70%
+    );
+    background-size: 220% 100%;
+    animation: audis-shimmer 1.4s linear infinite;
+    border-radius: var(--radius-control);
+  }
+}
+
+@keyframes audis-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes audis-push {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes audis-pop {
+  from {
+    opacity: 0;
+    transform: translateX(-28px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes audis-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes audis-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* A sheet grows out of the middle of the window, as on macOS. */
+@keyframes audis-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes audis-sheet-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+/* The heads-up display: drops in from the top edge and settles. */
+@keyframes audis-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-16px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes audis-toast-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+}
+
+/* Something new appearing in place, like the mini player. */
+@keyframes audis-pop-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The listening bars. Each bar runs the same loop at its own speed, which is
+ * what makes them read as sound rather than as a progress indicator. */
+@keyframes audis-eq {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+/* A soft halo behind the live session card. Slow enough to be ambient. */
+@keyframes audis-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.04);
+  }
+}
+
+@keyframes audis-shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
   }
 }
 

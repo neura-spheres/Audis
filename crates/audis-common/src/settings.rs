@@ -9,11 +9,17 @@ pub const SETTINGS_VERSION: u32 = 1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum StartPage {
-    /// Open on the dashboard.
+    /// Open on Home: start a feature, see what is running.
+    ///
+    /// The aliases are the pages Home replaced. A settings file written before
+    /// them must still load: one that fails to parse falls back to defaults
+    /// wholesale, which would throw away every other setting with it.
     #[default]
-    Dashboard,
-    /// Open on the session library.
-    Sessions,
+    #[serde(alias = "quickStart", alias = "dashboard")]
+    Home,
+    /// Open on the library of saved sessions.
+    #[serde(alias = "sessions")]
+    Library,
 }
 
 /// Appearance preference.
@@ -456,7 +462,23 @@ mod tests {
         let json = serde_json::to_value(Settings::default()).expect("serialise");
         assert_eq!(json["general"]["theme"], "system");
         assert_eq!(json["general"]["closeBehavior"], "minimizeToTray");
-        assert_eq!(json["general"]["startPage"], "dashboard");
+        assert_eq!(json["general"]["startPage"], "home");
+    }
+
+    /// Start pages that were renamed must keep loading, or a settings file from
+    /// an older build would be thrown away whole.
+    #[test]
+    fn retired_start_pages_still_load() {
+        for (old, expected) in [
+            ("dashboard", StartPage::Home),
+            ("quickStart", StartPage::Home),
+            ("sessions", StartPage::Library),
+        ] {
+            let parsed: Settings =
+                serde_json::from_str(&format!(r#"{{"general":{{"startPage":"{old}"}}}}"#))
+                    .expect("an old start page must load");
+            assert_eq!(parsed.general.start_page, expected, "{old}");
+        }
     }
 
     #[test]

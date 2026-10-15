@@ -13,6 +13,11 @@
 .PARAMETER Bundle
     Also produce the NSIS and MSI installers.
 
+    The installers are signed for auto-update only when TAURI_SIGNING_PRIVATE_KEY
+    is set, as it is in CI. Without it the installers are still built and install
+    normally; only the update package that GitHub releases serve is left out,
+    because it cannot be signed. See docs/releasing.md.
+
 .PARAMETER SkipChecks
     Skip the format, lint and test gates. For local iteration only.
 
@@ -52,13 +57,30 @@ try {
     if (-not $Bundle) {
         $arguments += '--no-bundle'
     }
+    elseif (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+        # Without the private key Tauri builds both installers and then fails
+        # trying to sign the update package. Leaving that package out keeps the
+        # installers, which need no key to install.
+        Write-Warning ('TAURI_SIGNING_PRIVATE_KEY is not set: building installers without ' +
+            'the signed update package. Fine for installing; not for publishing a release.')
+        $localConfig = Join-Path ([System.IO.Path]::GetTempPath()) 'audis-unsigned-bundle.json'
+        # WriteAllText writes UTF-8 without a byte-order mark, which the JSON
+        # parser requires; Set-Content in Windows PowerShell would add one.
+        [System.IO.File]::WriteAllText($localConfig, '{ "bundle": { "createUpdaterArtifacts": false } }')
+        $arguments += @('--config', $localConfig)
+    }
 
     Write-Host ''
     Write-Host '> Building Audis' -ForegroundColor Cyan
     Push-Location (Join-Path $repoRoot 'apps/desktop')
     try {
+        # tauri reports progress on stderr, which Windows PowerShell 5.1 would
+        # treat as a terminating error under 'Stop'. The exit code decides.
+        $ErrorActionPreference = 'Continue'
         pnpm @arguments
-        if ($LASTEXITCODE -ne 0) { throw "tauri build failed with exit code $LASTEXITCODE." }
+        $buildExit = $LASTEXITCODE
+        $ErrorActionPreference = 'Stop'
+        if ($buildExit -ne 0) { throw "tauri build failed with exit code $buildExit." }
     }
     finally {
         Pop-Location

@@ -98,6 +98,11 @@ impl CloudEngine {
             .part("file", part)
             .text("model", self.model.clone())
             .text("language", language.code().to_owned())
+            // Whisper reads this as the transcript so far. Written in the
+            // chosen language, it steers spelling and word choice towards that
+            // language inside the model, so a borrowed or ambiguous word comes
+            // out as that language would write it rather than switching.
+            .text("prompt", language.priming_prompt().to_owned())
             .text("response_format", "json".to_owned());
 
         let response = self
@@ -208,10 +213,7 @@ impl CloudEngine {
     /// Gemini's `generateContent`, with the audio inline.
     fn transcribe_gemini(&self, wav: Vec<u8>, language: Language) -> Result<String> {
         let audio = base64::engine::general_purpose::STANDARD.encode(&wav);
-        let language_name = match language {
-            Language::Indonesian => "Indonesian",
-            Language::English => "English",
-        };
+        let language_name = language.english_name();
 
         // Gemini is a chat model wearing a transcriber's hat, and it will fall
         // back to being an assistant ("Hi, how can I help you?") given half a
@@ -220,14 +222,7 @@ impl CloudEngine {
         // "reply with nothing" it would rather greet the user than say nothing.
         let body = serde_json::json!({
             "systemInstruction": {
-                "parts": [{ "text": format!(
-                    "You are a speech-to-text engine, not an assistant. You transcribe \
-                     {language_name} audio verbatim and do nothing else. Never greet, never \
-                     answer, never explain, never apologise, never describe the audio. Output \
-                     only the exact words spoken, with no quotation marks and no added \
-                     punctuation beyond what is spoken. If the audio contains no intelligible \
-                     speech, output exactly {NO_SPEECH} and nothing else."
-                ) }]
+                "parts": [{ "text": gemini_instruction(language_name) }]
             },
             "contents": [{
                 "parts": [
@@ -338,6 +333,26 @@ impl AsrEngine for CloudEngine {
     }
 }
 
+/// What Gemini is told when it is asked to transcribe.
+///
+/// It is a language model, so it can do what a plain recogniser cannot: hold
+/// every word to one language. A sound that could be heard as a foreign word is
+/// written as the nearest word in the chosen language, or in that language's
+/// spelling, instead of switching language mid-sentence.
+fn gemini_instruction(language_name: &str) -> String {
+    format!(
+        "You are a speech-to-text engine, not an assistant. You transcribe \
+         {language_name} audio verbatim and do nothing else. Never greet, never \
+         answer, never explain, never apologise, never describe the audio. \
+         Write every word in {language_name}. When a word sounds like another \
+         language, or could be heard either way, write the nearest {language_name} \
+         word, or spell it the way {language_name} would; never switch languages \
+         and never translate. Output only the words spoken, with no quotation marks \
+         and no added punctuation beyond what is spoken. If the audio contains no \
+         intelligible speech, output exactly {NO_SPEECH} and nothing else."
+    )
+}
+
 /// What a chat-based provider is told to emit when it hears no speech.
 ///
 /// Filtered out before anything reaches a caption. Deliberately not a word
@@ -441,29 +456,44 @@ pub fn fetch_models(
             ids.sort();
             ids
         }
-        SpeechApi::GeminiInline => {
-            let body = get_json(
-                client
-                    .get(format!("{base_url}/models"))
-                    .header("x-goog-api-key", &api_key),
-                &name,
-            )?;
-            let mut ids: Vec<String> = body
-                .get("models")
-                .and_then(|models| models.as_array())
-                .map(|entries| {
-                    entries
-                        .iter()
-                        .filter(|entry| supports_generate_content(entry))
-                        .filter_map(|entry| entry.get("name").and_then(|name| name.as_str()))
-                        .map(|name| name.trim_start_matches("models/").to_owned())
-                        .filter(|name| gemini_model_fits(name))
-                        .collect()
-                })
-                .unwrap_or_default();
-            ids.sort();
-            ids
-        }
+        // Speech is the fixed pair in the catalogue rather than whatever Google
+        // reports. Two reasons. Gemini's model list is a catalogue of dozens of
+        // things, of which exactly one streams and one is worth having as a
+        // fallback, and choosing between the rest is not a question anyone can
+        // answer. More importantly, `models.list` describes models by the
+        // methods they serve, and a model that only serves `bidiGenerateContent`
+        // has been seen missing from it entirely — a list built from that call
+        // can silently lose the streaming model, which is the whole reason to
+        // pick Gemini for speech, and leave no way to select it.
+        //
+        // Chat is still asked, because the assistant genuinely can use any
+        // conversational model the key can reach.
+        SpeechApi::GeminiInline => match purpose {
+            ModelPurpose::Speech => support.models.clone(),
+            ModelPurpose::Chat => {
+                let body = get_json(
+                    client
+                        .get(format!("{base_url}/models"))
+                        .header("x-goog-api-key", &api_key),
+                    &name,
+                )?;
+                let mut ids: Vec<String> = body
+                    .get("models")
+                    .and_then(|models| models.as_array())
+                    .map(|entries| {
+                        entries
+                            .iter()
+                            .filter(|entry| supports_method(entry, "generateContent"))
+                            .filter_map(|entry| entry.get("name").and_then(|name| name.as_str()))
+                            .map(|name| name.trim_start_matches("models/").to_owned())
+                            .filter(|name| gemini_model_fits(name))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                ids.sort();
+                ids
+            }
+        },
         SpeechApi::DeepgramListen => {
             // The speech models are the `stt` list, so there is no guessing from
             // the name. Deepgram has nothing to offer the assistant.
@@ -551,8 +581,7 @@ fn openai_model_fits(id: &str, purpose: ModelPurpose) -> bool {
     }
 }
 
-/// Whether a Gemini model is one of the general multimodal `flash`/`pro`
-/// models, which serve both transcription and chat.
+/// Whether a Gemini model is a general conversational model.
 ///
 /// Gemini's `/models` lists image generators, text-to-speech, embeddings and
 /// other tools alongside them, none of which can transcribe or converse, so
@@ -562,7 +591,9 @@ fn gemini_model_fits(name: &str) -> bool {
     if !name.starts_with("gemini") {
         return false;
     }
-    const NOT_GENERAL: [&str; 7] = [
+    // Excluded by purpose rather than included by family name: Google's
+    // flagship is now `gemini-4-argon`, which is neither `flash` nor `pro`.
+    const NOT_GENERAL: [&str; 10] = [
         "image",
         "tts",
         "embedding",
@@ -570,11 +601,11 @@ fn gemini_model_fits(name: &str) -> bool {
         "computer-use",
         "vision",
         "-live",
+        "transcribe",
+        "translate",
+        "robotics",
     ];
-    if NOT_GENERAL.iter().any(|bad| name.contains(bad)) {
-        return false;
-    }
-    name.contains("flash") || name.contains("pro")
+    !NOT_GENERAL.iter().any(|bad| name.contains(bad))
 }
 
 /// The general Nova model for one entry in Deepgram's catalogue, if it is one.
@@ -605,14 +636,14 @@ fn deepgram_speech_model(entry: &serde_json::Value) -> Option<String> {
     Some(format!("nova-{generation}"))
 }
 
-fn supports_generate_content(entry: &serde_json::Value) -> bool {
+fn supports_method(entry: &serde_json::Value, method: &str) -> bool {
     entry
         .get("supportedGenerationMethods")
         .and_then(|methods| methods.as_array())
         .map(|methods| {
             methods
                 .iter()
-                .any(|method| method.as_str() == Some("generateContent"))
+                .any(|supported| supported.as_str() == Some(method))
         })
         .unwrap_or(false)
 }
@@ -680,6 +711,9 @@ mod tests {
         assert!(gemini_model_fits("gemini-2.5-pro"));
         assert!(gemini_model_fits("gemini-3-flash-preview"));
         assert!(gemini_model_fits("gemini-2.0-flash-lite"));
+        assert!(gemini_model_fits("gemini-4-argon"));
+        assert!(!gemini_model_fits("gemini-3.5-transcribe"));
+        assert!(!gemini_model_fits("gemini-3.8-live"));
 
         for rejected in [
             "gemini-3-pro-image",
@@ -694,6 +728,38 @@ mod tests {
                 "{rejected} cannot transcribe and must not be offered"
             );
         }
+    }
+
+    /// The chosen language is a rule for Gemini, not a suggestion: it must
+    /// write ambiguous words in that language rather than switch.
+    #[test]
+    fn gemini_holds_every_word_to_the_chosen_language() {
+        let instruction = gemini_instruction("Indonesian");
+        assert!(instruction.contains("Write every word in Indonesian"));
+        assert!(instruction.contains("nearest Indonesian word"));
+        assert!(instruction.contains("never switch languages"));
+        assert!(instruction.contains(NO_SPEECH));
+        assert!(!instruction.contains("  "), "{instruction}");
+    }
+
+    /// Gemini offers two speech models and no others: the one that streams,
+    /// and one request-per-sentence fallback. The pair is fixed rather than
+    /// fetched so that the streaming model is always selectable — a list built
+    /// from Google's catalogue can omit it, and then the live path cannot be
+    /// reached from the UI at all.
+    #[test]
+    fn gemini_offers_exactly_two_speech_models_with_the_streaming_one_first() {
+        let speech = ProviderId::Gemini.speech().expect("Gemini transcribes");
+
+        assert_eq!(
+            speech.models,
+            vec![
+                audis_common::GEMINI_LIVE_MODEL.to_owned(),
+                audis_common::GEMINI_BATCH_MODEL.to_owned(),
+            ]
+        );
+        assert!(ProviderId::Gemini.streams_speech(&speech.models[0]));
+        assert!(!ProviderId::Gemini.streams_speech(&speech.models[1]));
     }
 
     /// One entry as Deepgram's `stt` list carries it.

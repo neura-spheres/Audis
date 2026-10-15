@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 
-import { ErrorNotice } from "@/components/ErrorNotice";
+import { Collapse } from "@/components/Collapse";
+import { GroupedList, Row } from "@/components/GroupedList";
+import { IconBadge } from "@/components/IconBadge";
+import { SpeakerIcon } from "@/components/icons";
 import { SegmentedControl, Switch } from "@/components/controls";
 import { useSettings } from "@/hooks/useSettings";
 import { AUDIS_EVENTS, subscribe } from "@/services/events";
@@ -15,10 +18,12 @@ const EXPECTED: { id: string; label: string; value: number }[] = [
   { id: "6", label: "6", value: 6 },
 ];
 
-export function SpeakersView() {
-  const { settings, error, update } = useSettings();
-
-  if (error) return <ErrorNotice error={error} />;
+/**
+ * Telling the remote voices apart. Your microphone is already known to be you,
+ * so only the computer's audio needs separating.
+ */
+export function SpeakersSection() {
+  const { settings, update } = useSettings();
   if (!settings) return null;
 
   const { speakers } = settings;
@@ -30,51 +35,48 @@ export function SpeakersView() {
     EXPECTED.find((option) => option.value === speakers.expectedSpeakers)?.id ?? "auto";
 
   return (
-    <div className="flex flex-col gap-5">
-      <p className="px-1 text-subheadline" style={{ color: "var(--label-secondary)" }}>
-        Audis separates the remote speakers in your computer's audio. Your microphone is already
-        known to be you, so it does not need guessing.
-      </p>
-
-      <section className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3">
+      <GroupedList
+        title="Speakers"
+        footnote="Audis never infers identity, age, gender or ethnicity from a voice. Live labels are provisional and can change as more audio arrives. Renaming, merging and saved voice profiles are not built yet."
+      >
         <Row
+          icon={
+            <IconBadge tint="orange" size={30}>
+              <SpeakerIcon />
+            </IconBadge>
+          }
           label="Separate remote speakers"
-          help="Give each distinct voice in your computer's audio its own label while a session runs."
-        >
-          <Switch
-            label="Separate remote speakers"
-            checked={speakers.enabled}
-            onChange={(enabled) => set({ enabled })}
-          />
-        </Row>
-
+          description="Give each distinct voice in your computer's audio its own label."
+          value={
+            <Switch
+              label="Separate remote speakers"
+              checked={speakers.enabled}
+              onChange={(enabled) => set({ enabled })}
+            />
+          }
+        />
         {speakers.enabled ? (
           <Row
             label="Expected number of speakers"
-            help="A hint, not a promise. Auto lets Audis decide as it listens; a fixed number caps how many it will separate."
-          >
-            <SegmentedControl<string>
-              label="Expected number of speakers"
-              value={expected}
-              options={EXPECTED.map((option) => ({ id: option.id, label: option.label }))}
-              onChange={(id) =>
-                set({ expectedSpeakers: EXPECTED.find((o) => o.id === id)?.value ?? 0 })
-              }
-            />
-          </Row>
+            description="A hint, not a promise. Auto lets Audis decide as it listens."
+            value={
+              <SegmentedControl<string>
+                label="Expected number of speakers"
+                value={expected}
+                options={EXPECTED.map((option) => ({ id: option.id, label: option.label }))}
+                onChange={(id) =>
+                  set({ expectedSpeakers: EXPECTED.find((o) => o.id === id)?.value ?? 0 })
+                }
+              />
+            }
+          />
         ) : null}
-      </section>
+      </GroupedList>
 
-      {speakers.enabled ? <LiveRoster /> : null}
-
-      <p className="px-1 text-footnote" style={{ color: "var(--label-tertiary)" }}>
-        Audis never infers identity, age, gender or ethnicity from a voice, and real-time labels are
-        always shown as provisional because they can change as more audio arrives.
-      </p>
-
-      <p className="px-1 text-footnote" style={{ color: "var(--label-tertiary)" }}>
-        Renaming, merging and splitting speakers, and saved voice profiles, are not built yet.
-      </p>
+      <Collapse open={speakers.enabled}>
+        <LiveRoster />
+      </Collapse>
     </div>
   );
 }
@@ -148,6 +150,7 @@ function LiveRoster() {
                 background: "var(--surface-sunken)",
                 borderRadius: "var(--radius-chip)",
                 color: "var(--label-primary)",
+                animation: "audis-pop-up var(--spring-bouncy-duration) var(--spring-bouncy) both",
               }}
             >
               {speaker.label}
@@ -158,35 +161,6 @@ function LiveRoster() {
       <span className="text-caption2" style={{ color: "var(--label-tertiary)" }}>
         Provisional. These can change as more of the conversation is heard.
       </span>
-    </div>
-  );
-}
-
-function Row({
-  label,
-  help,
-  children,
-}: {
-  label: string;
-  help: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className="flex items-center justify-between gap-4 p-3"
-      style={{
-        background: "var(--surface-content)",
-        borderRadius: "var(--radius-card)",
-        boxShadow: "var(--shadow-card)",
-      }}
-    >
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-subheadline">{label}</span>
-        <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
-          {help}
-        </span>
-      </div>
-      <div className="shrink-0">{children}</div>
     </div>
   );
 }

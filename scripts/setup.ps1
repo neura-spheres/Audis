@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Validates the Audis development environment and installs dependencies.
 

@@ -89,8 +89,15 @@ impl AsrEngine for WhisperEngine {
 
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
 
+        // Forcing the language picks the decoder's language token, which
+        // stops detection. The prompt goes further: Whisper reads it as the
+        // transcript so far, and a sentence in the chosen language keeps its
+        // word choice and spelling in that language for what follows, so a
+        // borrowed or ambiguous word is written the way that language writes it.
         params.set_language(Some(language.code()));
+        params.set_detect_language(false);
         params.set_translate(false);
+        params.set_initial_prompt(language.priming_prompt());
 
         params.set_temperature(0.0);
         params.set_temperature_inc(TEMPERATURE_INC);

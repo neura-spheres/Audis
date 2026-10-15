@@ -623,61 +623,77 @@ mod tests {
 }
 
 /// Start a live session for `feature`.
+///
+/// Runs off the UI thread. A live engine opens a socket to its provider and
+/// waits for the session to be accepted before the first sample is captured,
+/// and a command body runs on the thread that draws the window: doing that
+/// handshake here would freeze Audis for as long as the network took.
 #[tauri::command]
-pub fn start_session(
+pub async fn start_session(
     app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    models: State<'_, std::sync::Arc<crate::model_store::ModelStore>>,
-    session: State<'_, crate::session::SessionController>,
     feature: audis_common::FeatureId,
 ) -> Result<audis_common::SessionStatus> {
-    let settings = state.settings.get();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (settings, paths, models) = {
+            let state = app.state::<AppState>();
+            let models = app.state::<std::sync::Arc<crate::model_store::ModelStore>>();
+            (
+                state.settings.get(),
+                state.paths.clone(),
+                std::sync::Arc::clone(&models),
+            )
+        };
 
-    let engine = build_engine(&state, &models, &settings)?;
-    let diarize = build_diarizer(&settings);
+        let recogniser = build_recogniser(&paths, &models, &settings)?;
+        let diarize = build_diarizer(&settings);
 
-    session.start(
-        &app,
-        crate::session::SessionRequest {
-            engine,
-            diarize,
-            paths: state.paths.clone(),
-            mode: feature,
-            language: settings.transcription.language,
-            microphone_id: settings.audio.microphone_id.clone(),
-            computer_audio_id: settings.audio.computer_audio_id.clone(),
-            want_microphone: settings.transcription.capture_microphone,
-            want_computer_audio: settings.transcription.capture_computer_audio,
-            assistant_enabled: settings.assistant.enabled,
-            record: settings.recording.enabled,
-        },
-    )
+        app.state::<crate::session::SessionController>().start(
+            &app,
+            crate::session::SessionRequest {
+                recogniser,
+                diarize,
+                paths,
+                mode: feature,
+                language: settings.transcription.language,
+                microphone_id: settings.audio.microphone_id.clone(),
+                computer_audio_id: settings.audio.computer_audio_id.clone(),
+                want_microphone: settings.transcription.capture_microphone,
+                want_computer_audio: settings.transcription.capture_computer_audio,
+                assistant_enabled: settings.assistant.enabled,
+                record: settings.recording.enabled,
+            },
+        )
+    })
+    .await
+    .map_err(|error| audis_common::AudisError::Configuration {
+        detail: format!("the session thread could not run: {error}"),
+    })?
 }
 
 /// Build whatever the user chose to recognise speech with.
-fn build_engine(
-    state: &AppState,
-    models: &std::sync::Arc<crate::model_store::ModelStore>,
+fn build_recogniser(
+    paths: &AppPaths,
+    models: &crate::model_store::ModelStore,
     settings: &Settings,
-) -> Result<Box<dyn audis_asr::AsrEngine>> {
+) -> Result<crate::session::Recogniser> {
+    use crate::session::Recogniser;
     use audis_common::TranscriptionEngine;
 
     match &settings.transcription.engine {
         TranscriptionEngine::Local { model } => {
             tracing::info!(?model, "building local speech engine");
-            let path = models.path_if_installed(&state.paths, *model).ok_or(
+            let path = models.path_if_installed(paths, *model).ok_or(
                 audis_common::AudisError::Configuration {
                     detail: "no speech model is installed. Open Models and install Whisper Base."
                         .to_owned(),
                 },
             )?;
 
-            let engine = audis_asr::WhisperEngine::load(&path).map_err(as_configuration)?;
-            Ok(Box::new(engine))
+            let engine = audis_asr::WhisperEngine::load(&path).map_err(as_engine_failure)?;
+            Ok(Recogniser::Batch(Box::new(engine)))
         }
 
         TranscriptionEngine::Cloud { provider, model } => {
-            tracing::info!(?provider, %model, "building cloud speech engine");
             let key = crate::credentials::get_key(*provider)?.ok_or(
                 audis_common::AudisError::Configuration {
                     detail: format!(
@@ -688,6 +704,20 @@ fn build_engine(
                 },
             )?;
 
+            // Which pipeline runs is decided by the model, not by a separate
+            // setting: a live model only answers over a socket, and a batch
+            // model only answers a request. Picking one in Transcription picks
+            // both.
+            if provider.streams_speech(model) {
+                tracing::info!(?provider, %model, "building live speech engine");
+                return Ok(Recogniser::Live(audis_asr::LiveConfig {
+                    model: model.clone(),
+                    api_key: key,
+                    language: settings.transcription.language,
+                }));
+            }
+
+            tracing::info!(?provider, %model, "building cloud speech engine");
             let endpoint = settings
                 .providers
                 .iter()
@@ -695,8 +725,8 @@ fn build_engine(
                 .and_then(|config| config.endpoint.clone());
 
             let engine = audis_asr::CloudEngine::new(*provider, model.clone(), endpoint, key)
-                .map_err(as_configuration)?;
-            Ok(Box::new(engine))
+                .map_err(as_engine_failure)?;
+            Ok(Recogniser::Batch(Box::new(engine)))
         }
     }
 }
@@ -715,12 +745,15 @@ fn build_diarizer(settings: &Settings) -> Option<audis_asr::Diarizer> {
     Some(audis_asr::Diarizer::new(config))
 }
 
-/// Carry an ASR failure out through a command.
-fn as_configuration(error: audis_asr::AsrError) -> audis_common::AudisError {
-    let facing = error.to_user_facing();
-    audis_common::AudisError::Configuration {
-        detail: format!("{} {}", facing.explanation, facing.suggested_action),
-    }
+/// Carry an ASR failure out through a command, keeping what it said.
+///
+/// The engine already distinguishes a rejected key from an exhausted quota from
+/// an unreachable provider, and each has a different fix. Rewriting all of them
+/// as a configuration error loses that and tells the user to go and check their
+/// storage location.
+fn as_engine_failure(error: audis_asr::AsrError) -> audis_common::AudisError {
+    tracing::warn!(%error, "the speech engine could not be built");
+    audis_common::AudisError::Engine(Box::new(error.to_user_facing()))
 }
 
 /// Stop the running session and release every device.
@@ -877,7 +910,7 @@ pub async fn ask_assistant(
     )
     .ok();
 
-    let answer = outcome.map_err(as_configuration)?;
+    let answer = outcome.map_err(as_engine_failure)?;
 
     if !answer.is_empty() {
         app.emit(
@@ -1003,7 +1036,7 @@ pub async fn assistant_summarize(
     .map_err(|error| audis_common::AudisError::Configuration {
         detail: format!("the summary request could not run: {error}"),
     })?
-    .map_err(as_configuration)?;
+    .map_err(as_engine_failure)?;
 
     Ok(summary.trim().to_owned())
 }
@@ -1042,7 +1075,7 @@ pub async fn meeting_update(
     .map_err(|error| audis_common::AudisError::Configuration {
         detail: format!("the meeting update could not run: {error}"),
     })?
-    .map_err(as_configuration)?;
+    .map_err(as_engine_failure)?;
 
     let update = parse_meeting_update(&raw);
     app.emit(audis_common::events::MEETING_UPDATE, &update).ok();
@@ -1195,7 +1228,7 @@ pub async fn generate_session_report(app: tauri::AppHandle, id: uuid::Uuid) -> R
     .map_err(|error| audis_common::AudisError::Configuration {
         detail: format!("the report request could not run: {error}"),
     })?
-    .map_err(as_configuration)?;
+    .map_err(as_engine_failure)?;
 
     let report = report.trim();
     if report.is_empty() {
@@ -1376,5 +1409,5 @@ pub async fn list_provider_models(
     .map_err(|error| audis_common::AudisError::Configuration {
         detail: format!("could not fetch the model list: {error}"),
     })?
-    .map_err(as_configuration)
+    .map_err(as_engine_failure)
 }

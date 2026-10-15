@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Runs every check CI runs: formatting, linting, type checking and tests.
 
@@ -41,6 +41,10 @@ function Invoke-Gate {
     Write-Host ""
     Write-Host "→ $Name" -ForegroundColor Cyan
 
+    # Windows PowerShell 5.1 turns anything a native tool writes to stderr into
+    # an error record, and under 'Stop' that ends the script on cargo's ordinary
+    # "Checking ..." progress lines. A gate is decided by its exit code alone.
+    $ErrorActionPreference = 'Continue'
     & $Command
     $ok = ($LASTEXITCODE -eq 0)
 

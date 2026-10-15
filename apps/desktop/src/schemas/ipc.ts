@@ -53,7 +53,7 @@ export const diagnosticWarningSchema = z.object({
 
 /** Mirrors `Settings` and its nested types in audis-common. */
 export const themePreferenceSchema = z.enum(["light", "dark", "system"]);
-export const startPageSchema = z.enum(["dashboard", "sessions"]);
+export const startPageSchema = z.enum(["home", "library"]);
 export const closeBehaviorSchema = z.enum(["minimizeToTray", "quit"]);
 
 export const generalSettingsSchema = z.object({

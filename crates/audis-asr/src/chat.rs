@@ -7,7 +7,7 @@ use audis_common::{ChatApi, ProviderId};
 use crate::error::{AsrError, Result};
 
 const TIMEOUT: Duration = Duration::from_secs(45);
-const MAX_TOKENS: u32 = 1024;
+const MAX_TOKENS: u32 = 4096;
 
 /// Ask a provider's chat model for a reply.
 pub fn chat(
@@ -93,6 +93,9 @@ pub fn chat(
             let body = serde_json::json!({
                 "model": model,
                 "max_tokens": MAX_TOKENS,
+                // Current Claude models think by default and that thinking
+                // counts against `max_tokens`. These are short meeting answers.
+                "output_config": { "effort": "low" },
                 "system": system,
                 "messages": [{ "role": "user", "content": user }],
             });
@@ -104,8 +107,17 @@ pub fn chat(
                     .json(&body),
                 &name,
             )?;
+            // The first block is a `thinking` block on current models, so the
+            // answer is the first `text` block, wherever it sits.
             Ok(value
-                .pointer("/content/0/text")
+                .get("content")
+                .and_then(|blocks| blocks.as_array())
+                .and_then(|blocks| {
+                    blocks
+                        .iter()
+                        .find(|block| block.get("type").and_then(|t| t.as_str()) == Some("text"))
+                })
+                .and_then(|block| block.get("text"))
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_owned())

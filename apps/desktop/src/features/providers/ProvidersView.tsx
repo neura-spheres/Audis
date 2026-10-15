@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { ErrorNotice } from "@/components/ErrorNotice";
-import { Button, Switch } from "@/components/controls";
+import { surfaceStyle } from "@/components/GroupedList";
+import { ProviderMonogram } from "@/components/IconBadge";
 import { ExternalIcon } from "@/components/icons";
+import { Page } from "@/components/Page";
+import { showToast } from "@/components/Toast";
+import { Badge, Button, Select, Switch, TextField } from "@/components/controls";
 import {
   deleteProviderKey,
   listProviders,
@@ -27,30 +31,36 @@ export function ProvidersView() {
   useEffect(refresh, [refresh]);
 
   return (
-    <div className="flex flex-col gap-5">
+    <Page
+      title="AI Providers"
+      subtitle="The assistant needs one. Gemini and Groq have free tiers. Transcription on this PC needs none of this."
+    >
       {error ? <ErrorNotice error={error} /> : null}
 
-      <p className="px-1 text-subheadline" style={{ color: "var(--label-secondary)" }}>
-        The AI assistant needs a provider. Gemini and Groq have free tiers. Transcription does not
-        need any of this: it runs on this PC for free.
-      </p>
-
-      <div className="flex flex-col gap-3">
-        {(providers ?? []).map((provider) => (
-          <ProviderCard
-            key={provider.info.id}
-            provider={provider}
-            onChanged={refresh}
-            onError={setError}
-          />
-        ))}
+      <div className="audis-stagger flex flex-col gap-3">
+        {providers === undefined
+          ? [0, 1, 2].map((index) => (
+              <div
+                key={index}
+                className="audis-skeleton h-[148px]"
+                style={{ borderRadius: "var(--radius-card)" }}
+              />
+            ))
+          : providers.map((provider) => (
+              <ProviderCard
+                key={provider.info.id}
+                provider={provider}
+                onChanged={refresh}
+                onError={setError}
+              />
+            ))}
       </div>
 
       <p className="px-1 text-footnote" style={{ color: "var(--label-tertiary)" }}>
         Keys are stored in the Windows Credential Manager, protected by your Windows account. Audis
         never writes them to its own files, logs or exports, and cannot show a key once saved.
       </p>
-    </div>
+    </Page>
   );
 }
 
@@ -90,6 +100,7 @@ function ProviderCard({
     setProviderKey(info.id, keyInput)
       .then(() => {
         setKeyInput("");
+        showToast({ title: "API key saved", message: `${info.name} is ready to use.` });
         onChanged();
       })
       .catch((cause: unknown) => onError(toUserFacing(cause)))
@@ -115,103 +126,84 @@ function ProviderCard({
   };
 
   return (
-    <section
-      className="flex flex-col gap-3 p-4"
-      style={{
-        background: "var(--surface-content)",
-        borderRadius: "var(--radius-card)",
-        boxShadow: "var(--shadow-card)",
-      }}
-    >
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex min-w-0 flex-col gap-1">
-          <div className="flex items-center gap-2">
-            <h2 className="text-body font-semibold">{info.name}</h2>
-            {info.freeTier ? (
-              <span className="text-caption2 font-medium" style={{ color: "var(--color-success)" }}>
-                Free tier
-              </span>
-            ) : null}
-            {provider.hasKey ? (
-              <span className="text-caption2" style={{ color: "var(--label-secondary)" }}>
-                Key saved
-              </span>
-            ) : null}
+    <section className="flex flex-col overflow-hidden" style={surfaceStyle}>
+      <div className="flex items-center gap-3 p-3.5">
+        <ProviderMonogram name={info.name} />
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <h2 className="text-subheadline font-semibold">{info.name}</h2>
+            {info.freeTier ? <Badge tone="success">Free tier</Badge> : null}
+            {provider.hasKey ? <Badge tone="accent">Key saved</Badge> : null}
           </div>
-          <p className="text-subheadline" style={{ color: "var(--label-secondary)" }}>
+          <p className="text-footnote" style={{ color: "var(--label-secondary)" }}>
             {info.summary}
           </p>
         </div>
-
-        <div className="flex shrink-0 items-center gap-2">
-          <Switch label={`Enable ${info.name}`} checked={provider.enabled} onChange={setEnabled} />
-        </div>
+        <Switch label={`Enable ${info.name}`} checked={provider.enabled} onChange={setEnabled} />
       </div>
 
-      {info.needsEndpoint ? (
-        <label className="flex flex-col gap-1">
-          <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
-            Endpoint
-          </span>
-          <input
-            type="url"
-            value={endpoint}
-            onChange={(event) => setEndpoint(event.target.value)}
-            onBlur={() => setModel(provider.model)}
-            placeholder="http://localhost:11434/v1"
-            className="w-full px-2.5 py-[5px] text-footnote"
-            style={inputStyle}
-          />
-        </label>
-      ) : null}
-
-      {models.length > 0 ? (
-        <label className="flex items-center justify-between gap-3">
-          <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
-            Model
-          </span>
-          <select
-            value={provider.model}
-            onChange={(event) => setModel(event.target.value)}
-            className="px-2.5 py-[5px] text-footnote"
-            style={inputStyle}
-          >
-            {[...new Set([provider.model, ...models])].map((model) => (
-              <option key={model} value={model}>
-                {model}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
-
-      <div className="flex flex-col gap-2">
-        <div className="flex items-end gap-2">
-          <label className="flex min-w-0 flex-1 flex-col gap-1">
+      <div
+        className="flex flex-col gap-3 px-3.5 pt-3 pb-3.5"
+        style={{ boxShadow: "inset 0 0.5px 0 var(--separator)" }}
+      >
+        {info.needsEndpoint ? (
+          <label className="flex flex-col gap-1">
             <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
-              {provider.hasKey ? "Replace API key" : "API key"}
+              Endpoint
             </span>
-            <input
+            <TextField
+              type="url"
+              value={endpoint}
+              onChange={setEndpoint}
+              onBlur={() => setModel(provider.model)}
+              placeholder="http://localhost:11434/v1"
+            />
+          </label>
+        ) : null}
+
+        {models.length > 0 ? (
+          <label className="flex items-center justify-between gap-3">
+            <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
+              Model
+            </span>
+            <Select value={provider.model} onChange={setModel}>
+              {[...new Set([provider.model, ...models])].map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </Select>
+          </label>
+        ) : null}
+
+        <div className="flex flex-col gap-1">
+          <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
+            {provider.hasKey ? "Replace API key" : "API key"}
+          </span>
+          <div className="flex items-center gap-2">
+            <TextField
               type="password"
               value={keyInput}
-              onChange={(event) => setKeyInput(event.target.value)}
+              onChange={setKeyInput}
+              onEnter={saveKey}
               placeholder={
                 provider.hasKey ? "A key is saved. Type a new one to replace it." : "Paste your key"
               }
-              autoComplete="off"
-              spellCheck={false}
-              className="w-full px-2.5 py-[5px] text-footnote"
-              style={inputStyle}
+              secret
             />
-          </label>
-          <Button onClick={saveKey} disabled={!keyInput.trim() || saving} variant="accent">
-            {saving ? "Saving…" : "Save"}
-          </Button>
-          {provider.hasKey ? (
-            <Button onClick={removeKey} variant="danger" ariaLabel={`Delete the ${info.name} key`}>
-              Delete
+            <Button onClick={saveKey} disabled={!keyInput.trim() || saving} variant="accent">
+              {saving ? "Saving…" : "Save"}
             </Button>
-          ) : null}
+            {provider.hasKey ? (
+              <Button
+                onClick={removeKey}
+                variant="danger"
+                ariaLabel={`Delete the ${info.name} key`}
+              >
+                Delete
+              </Button>
+            ) : null}
+          </div>
         </div>
 
         {info.consoleUrl ? (
@@ -230,13 +222,6 @@ function ProviderCard({
     </section>
   );
 }
-
-const inputStyle = {
-  background: "var(--surface-elevated)",
-  color: "var(--label-primary)",
-  border: "0.5px solid var(--border-control)",
-  borderRadius: "var(--radius-control)",
-} as const;
 
 function toUserFacing(cause: unknown): UserFacingError {
   if (cause instanceof AudisIpcError) return cause.userFacing;

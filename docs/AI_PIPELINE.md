@@ -1,7 +1,10 @@
 # Audis ASR & AI Pipeline
 
-> **Status: planned.** This documents the intended architecture. None of the
-> traits or adapters below exist yet.
+> **Status: mostly planned.** This documents the intended architecture. The
+> `AsrProvider` trait below does not exist. What does exist is two pipelines —
+> batch for Whisper, Groq, Deepgram and Gemini's request API, and streaming for
+> Google's Live models — described in
+> [ADR-004, "As built"](adr/ADR-004-asr-provider-abstraction.md).
 
 ## ASR (recognition) vs AI (assistance)
 

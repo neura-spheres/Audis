@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 
 import { ErrorNotice } from "@/components/ErrorNotice";
+import { GroupedList, Row } from "@/components/GroupedList";
+import { Page } from "@/components/Page";
 import { Button } from "@/components/controls";
 import { useSettings } from "@/hooks/useSettings";
 import type { ShortcutSettings } from "@/schemas/ipc";
@@ -55,58 +57,49 @@ export function ShortcutsView() {
     }));
 
   return (
-    <div className="flex flex-col gap-3">
-      <p className="px-1 text-footnote" style={{ color: "var(--label-secondary)" }}>
-        These work anywhere in Windows, even when Audis is in the background. Click Change and press
-        the keys you want, or Escape to cancel.
-      </p>
+    <Page
+      title="Shortcuts"
+      subtitle="These work anywhere in Windows, even when Audis is in the background."
+    >
+      <GroupedList footnote="Click Change and press the keys you want, or Escape to cancel. A shortcut needs Ctrl, Alt, Shift or Win.">
+        {SHORTCUTS.map((shortcut) => {
+          const value = settings.shortcuts[shortcut.key];
+          const isRecording = recording === shortcut.key;
 
-      {SHORTCUTS.map((shortcut) => {
-        const value = settings.shortcuts[shortcut.key];
-        const isRecording = recording === shortcut.key;
-
-        return (
-          <div
-            key={shortcut.key}
-            className="flex items-center justify-between gap-4 p-3"
-            style={{
-              background: "var(--surface-content)",
-              borderRadius: "var(--radius-card)",
-              boxShadow: "var(--shadow-card)",
-            }}
-          >
-            <div className="flex min-w-0 flex-col gap-0.5">
-              <span className="text-subheadline">{shortcut.label}</span>
-              <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
-                {shortcut.help}
-              </span>
-            </div>
-
-            <div className="flex shrink-0 items-center gap-2">
-              {isRecording ? (
-                <span
-                  className="rounded-[6px] px-2.5 py-1 text-footnote font-medium"
-                  style={{
-                    color: "var(--color-accent)",
-                    border: "1px solid var(--color-accent)",
-                  }}
-                >
-                  Press keys…
-                </span>
-              ) : (
-                <Keycap value={value} />
-              )}
-              <Button onClick={() => setRecording(shortcut.key)}>Change</Button>
-              {value ? (
-                <Button onClick={() => set(shortcut.key, null)} variant="standard">
-                  Clear
-                </Button>
-              ) : null}
-            </div>
-          </div>
-        );
-      })}
-    </div>
+          return (
+            <Row
+              key={shortcut.key}
+              label={shortcut.label}
+              description={shortcut.help}
+              value={
+                <div className="flex shrink-0 items-center gap-2">
+                  {isRecording ? (
+                    <span
+                      className="rounded-[6px] px-2.5 py-1 text-footnote font-medium"
+                      style={{
+                        color: "var(--color-accent)",
+                        boxShadow: "inset 0 0 0 1px var(--color-accent)",
+                        animation: "audis-breathe 1.6s ease-in-out infinite",
+                      }}
+                    >
+                      Press keys…
+                    </span>
+                  ) : (
+                    <Keycap value={value} />
+                  )}
+                  <Button onClick={() => setRecording(shortcut.key)}>Change</Button>
+                  {value ? (
+                    <Button onClick={() => set(shortcut.key, null)} variant="plain">
+                      Clear
+                    </Button>
+                  ) : null}
+                </div>
+              }
+            />
+          );
+        })}
+      </GroupedList>
+    </Page>
   );
 }
 
@@ -119,15 +112,24 @@ function Keycap({ value }: { value: string | null }) {
     );
   }
   return (
-    <span
-      className="rounded-[6px] px-2.5 py-1 text-footnote font-medium tabular-nums"
-      style={{
-        background: "var(--surface-sunken)",
-        color: "var(--label-primary)",
-        border: "0.5px solid var(--border-control)",
-      }}
-    >
-      {prettyAccelerator(value)}
+    <span className="flex items-center gap-1">
+      {prettyAccelerator(value)
+        .split(" ")
+        .map((key, index) => (
+          <kbd
+            key={`${key}-${index}`}
+            className="min-w-[22px] px-1.5 py-0.5 text-center text-caption1 font-semibold"
+            style={{
+              fontFamily: "var(--font-sans)",
+              background: "var(--surface-elevated)",
+              color: "var(--label-primary)",
+              borderRadius: 5,
+              boxShadow: "0 1px 0 var(--border-control), 0 0 0 0.5px var(--border-control)",
+            }}
+          >
+            {key}
+          </kbd>
+        ))}
     </span>
   );
 }
@@ -172,6 +174,8 @@ function prettyAccelerator(value: string): string {
     .map((part) => {
       switch (part) {
         case "Ctrl":
+        case "CmdOrCtrl":
+        case "CommandOrControl":
           return "Ctrl";
         case "Alt":
           return "Alt";

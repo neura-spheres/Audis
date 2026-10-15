@@ -2,7 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 
 import { GroupedList, Row } from "@/components/GroupedList";
 import { ErrorNotice } from "@/components/ErrorNotice";
-import { Button } from "@/components/controls";
+import { IconBadge } from "@/components/IconBadge";
+import { MicIcon, SpeakerIcon } from "@/components/icons";
+import { Page } from "@/components/Page";
+import { Button, Select, Switch } from "@/components/controls";
 import { useSettings } from "@/hooks/useSettings";
 import { AUDIS_EVENTS, subscribe } from "@/services/events";
 import { LevelMeter } from "./LevelMeter";
@@ -75,23 +78,89 @@ export function AudioView() {
 
   if (!settings) return null;
 
+  const t = settings.transcription;
+
   return (
-    <div className="flex flex-col gap-8">
+    <Page
+      title="Audio"
+      subtitle="Your microphone and the computer's sound are captured separately, so you are never mixed in with the people you are listening to."
+      accessory={
+        testing ? (
+          <Button onClick={stop} variant="danger">
+            Stop test
+          </Button>
+        ) : (
+          <Button onClick={start} variant="accent">
+            Test audio
+          </Button>
+        )
+      }
+    >
       {error ? <ErrorNotice error={error} /> : null}
 
-      <p className="px-1 text-footnote" style={{ color: "var(--label-secondary)" }}>
-        Your device choice is saved automatically and used for every session.
-      </p>
-
       <GroupedList
-        title="Microphone"
-        footnote="Your microphone is captured as its own source, so you are never mixed in with the people you are listening to."
+        title="Listen to"
+        footnote={
+          !t.captureMicrophone && !t.captureComputerAudio ? (
+            <span style={{ color: "var(--color-warning)" }}>
+              Audis needs at least one of these switched on before a session can start.
+            </span>
+          ) : (
+            "Used by every session you start."
+          )
+        }
       >
+        <Row
+          icon={
+            <IconBadge tint="red" size={30}>
+              <MicIcon />
+            </IconBadge>
+          }
+          label="Your microphone"
+          description="What you say. Always labelled as you, never guessed."
+          value={
+            <Switch
+              label="Capture your microphone"
+              checked={t.captureMicrophone}
+              onChange={(captureMicrophone) =>
+                update((current) => ({
+                  ...current,
+                  transcription: { ...current.transcription, captureMicrophone },
+                }))
+              }
+            />
+          }
+        />
+        <Row
+          icon={
+            <IconBadge tint="blue" size={30}>
+              <SpeakerIcon />
+            </IconBadge>
+          }
+          label="Computer audio"
+          description="Everyone else in a call, and any video you play. No virtual cable needed."
+          value={
+            <Switch
+              label="Capture computer audio"
+              checked={t.captureComputerAudio}
+              onChange={(captureComputerAudio) =>
+                update((current) => ({
+                  ...current,
+                  transcription: { ...current.transcription, captureComputerAudio },
+                }))
+              }
+            />
+          }
+        />
+      </GroupedList>
+
+      <GroupedList title="Microphone" footnote="Your choice is saved and used for every session.">
         <Row
           label="Device"
           stacked
           value={
             <DevicePicker
+              label="Microphone device"
               devices={devices?.inputs ?? []}
               value={micId}
               onChange={(id) => pick("mic", id)}
@@ -105,7 +174,7 @@ export function AudioView() {
               ? `${status.microphone.deviceName} · ${status.microphone.sampleRate} Hz · ${channelLabel(status.microphone.channels)}`
               : testing
                 ? "Not capturing."
-                : "Start the test to see live levels."
+                : "Test audio to see live levels. Nothing is recorded."
           }
           stacked
           value={<LevelMeter level={levels.microphone} />}
@@ -119,15 +188,20 @@ export function AudioView() {
         ) : null}
       </GroupedList>
 
-      <GroupedList
-        title="Computer audio"
-        footnote="Audis listens to what this PC is playing. No virtual audio cable or extra driver is needed. Play something and the meter should move."
-      >
+      {testing && isSilent(levels.microphone?.silenceDurationMs) ? (
+        <p className="-mt-4 px-3 text-footnote" style={{ color: "var(--color-warning)" }}>
+          The microphone has been silent for a while. Check that the right device is selected and
+          that microphone access is allowed in Windows privacy settings.
+        </p>
+      ) : null}
+
+      <GroupedList title="Computer audio" footnote="Play something and the meter should move.">
         <Row
           label="Capture from"
           stacked
           value={
             <DevicePicker
+              label="Computer audio device"
               devices={devices?.outputs ?? []}
               value={outId}
               onChange={(id) => pick("out", id)}
@@ -141,7 +215,7 @@ export function AudioView() {
               ? `${status.computerAudio.deviceName} · ${status.computerAudio.sampleRate} Hz · ${channelLabel(status.computerAudio.channels)}`
               : testing
                 ? "Not capturing."
-                : "Start the test to see live levels."
+                : "Test audio to see live levels. Nothing is recorded."
           }
           stacked
           value={<LevelMeter level={levels.computerAudio} />}
@@ -154,31 +228,7 @@ export function AudioView() {
           />
         ) : null}
       </GroupedList>
-
-      <div className="flex items-center gap-3">
-        {testing ? (
-          <Button onClick={stop} variant="danger">
-            Stop test
-          </Button>
-        ) : (
-          <Button onClick={start} variant="accent">
-            Start audio test
-          </Button>
-        )}
-        <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
-          {testing
-            ? "Audis is listening. Both devices are open."
-            : "Nothing is being recorded. The test only shows levels."}
-        </span>
-      </div>
-
-      {testing && isSilent(levels.microphone?.silenceDurationMs) ? (
-        <p className="px-3 text-footnote" style={{ color: "var(--color-warning)" }}>
-          The microphone has been silent for a while. Check that the right device is selected and
-          that microphone access is allowed in Windows privacy settings.
-        </p>
-      ) : null}
-    </div>
+    </Page>
   );
 }
 
@@ -194,37 +244,33 @@ function channelLabel(channels: number): string {
 
 /** Device picker. */
 function DevicePicker({
+  label,
   devices,
   value,
   onChange,
 }: {
+  label: string;
   devices: readonly AudioDevice[];
   value: string | null;
   onChange: (id: string | null) => void;
 }) {
+  const fallback = devices.find((device) => device.isDefault);
   return (
-    <select
+    <Select
+      wide
+      label={label}
       value={value ?? ""}
-      onChange={(event) => onChange(event.target.value === "" ? null : event.target.value)}
-      className="w-full px-2.5 py-[5px] text-footnote"
-      style={{
-        background: "var(--surface-elevated)",
-        color: "var(--label-primary)",
-        border: "0.5px solid var(--border-control)",
-        borderRadius: "var(--radius-control)",
-      }}
+      onChange={(next) => onChange(next === "" ? null : next)}
     >
       <option value="">
-        {devices.find((device) => device.isDefault)
-          ? `Windows default (${devices.find((device) => device.isDefault)?.name})`
-          : "Windows default"}
+        {fallback ? `Windows default (${fallback.name})` : "Windows default"}
       </option>
       {devices.map((device) => (
         <option key={device.id} value={device.id}>
           {device.name} ({device.sampleRate} Hz, {channelLabel(device.channels)})
         </option>
       ))}
-    </select>
+    </Select>
   );
 }
 

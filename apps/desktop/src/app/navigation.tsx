@@ -1,55 +1,55 @@
 import type { ReactNode } from "react";
 
+import type { Tint } from "@/components/IconBadge";
 import {
   AiIcon,
-  SparkIcon,
-  BellIcon,
   CaptionIcon,
-  ClockIcon,
   FolderIcon,
-  GaugeIcon,
+  HandIcon,
+  HomeIcon,
   InfoIcon,
   KeyIcon,
   KeyboardIcon,
-  LockIcon,
+  LibraryIcon,
   MicIcon,
   SlidersIcon,
-  SpeakerIcon,
-  StethoscopeIcon,
-  TextIcon,
+  WaveformIcon,
 } from "@/components/icons";
 
-/** The application's information architecture. */
+/**
+ * The application's information architecture.
+ *
+ * Two places to use Audis, then its settings. Home is where everything starts
+ * and where a running session lives; Library is what sessions leave behind.
+ * Settings are grouped the way System Settings groups panes, one pane per thing
+ * a person would go looking for.
+ */
 
 export type ViewId =
-  | "dashboard"
-  | "features"
-  | "sessions"
-  | "files"
+  | "home"
+  | "library"
   | "general"
   | "audio"
-  | "transcription"
-  | "speakers"
-  | "assistant"
+  | "speech"
   | "captions"
-  | "shortcuts"
+  | "assistant"
   | "providers"
-  | "models"
+  | "shortcuts"
   | "storage"
   | "privacy"
-  | "diagnostics"
   | "about";
 
 export interface NavItem {
   id: ViewId;
   label: string;
   icon: ReactNode;
-  /** Page title shown in the header. */
-  title: string;
+  tint: Tint;
+  /** Words someone might search for to find this pane, beyond its name. */
+  keywords: readonly string[];
 }
 
 export interface NavGroup {
-  /** Group heading. Omitted for the first group, which needs no label. */
+  /** Group heading. Omitted for groups that need no label. */
   title?: string;
   items: readonly NavItem[];
 }
@@ -57,41 +57,131 @@ export interface NavGroup {
 export const NAV_GROUPS: readonly NavGroup[] = [
   {
     items: [
-      { id: "dashboard", label: "Dashboard", icon: <GaugeIcon />, title: "Dashboard" },
-      { id: "features", label: "Features", icon: <SparkIcon />, title: "Features" },
-      { id: "sessions", label: "Sessions", icon: <ClockIcon />, title: "Sessions" },
-      { id: "files", label: "Files", icon: <FolderIcon />, title: "Files" },
+      {
+        id: "home",
+        label: "Home",
+        icon: <HomeIcon />,
+        tint: "blue",
+        keywords: ["start", "quick start", "dashboard", "features", "session", "live caption"],
+      },
+      {
+        id: "library",
+        label: "Library",
+        icon: <LibraryIcon />,
+        tint: "orange",
+        keywords: ["sessions", "transcripts", "history", "export", "report", "srt", "markdown"],
+      },
     ],
   },
   {
     title: "Settings",
     items: [
-      { id: "general", label: "General", icon: <SlidersIcon />, title: "General" },
-      { id: "audio", label: "Audio", icon: <MicIcon />, title: "Audio" },
       {
-        id: "transcription",
-        label: "Transcription",
-        icon: <TextIcon />,
-        title: "Transcription",
+        id: "general",
+        label: "General",
+        icon: <SlidersIcon />,
+        tint: "gray",
+        keywords: ["theme", "appearance", "dark", "light", "startup", "open on", "tray", "close"],
       },
-      { id: "speakers", label: "Speakers", icon: <SpeakerIcon />, title: "Speakers" },
-      { id: "assistant", label: "AI Assistant", icon: <AiIcon />, title: "AI Assistant" },
-      { id: "captions", label: "Captions", icon: <CaptionIcon />, title: "Captions" },
-      { id: "shortcuts", label: "Shortcuts", icon: <KeyboardIcon />, title: "Shortcuts" },
-      { id: "providers", label: "Providers", icon: <KeyIcon />, title: "Providers" },
-      { id: "models", label: "Models", icon: <BellIcon />, title: "Local models" },
-      { id: "storage", label: "Storage", icon: <FolderIcon />, title: "Storage" },
-      { id: "privacy", label: "Privacy", icon: <LockIcon />, title: "Privacy" },
       {
-        id: "diagnostics",
-        label: "Diagnostics",
-        icon: <StethoscopeIcon />,
-        title: "Diagnostics",
+        id: "audio",
+        label: "Audio",
+        icon: <MicIcon />,
+        tint: "red",
+        keywords: [
+          "microphone",
+          "device",
+          "computer audio",
+          "loopback",
+          "level",
+          "test",
+          "sources",
+        ],
+      },
+      {
+        id: "speech",
+        label: "Speech Recognition",
+        icon: <WaveformIcon />,
+        tint: "purple",
+        keywords: [
+          "transcription",
+          "engine",
+          "whisper",
+          "models",
+          "download",
+          "language",
+          "indonesian",
+          "english",
+          "speakers",
+          "separation",
+          "cloud",
+        ],
+      },
+      {
+        id: "captions",
+        label: "Captions",
+        icon: <CaptionIcon />,
+        tint: "teal",
+        keywords: ["overlay", "font", "text size", "lines", "background", "click through"],
+      },
+      {
+        id: "assistant",
+        label: "AI Assistant",
+        icon: <AiIcon />,
+        tint: "indigo",
+        keywords: ["ai", "questions", "answers", "context", "notes", "meeting", "interview", "ask"],
+      },
+      {
+        id: "providers",
+        label: "AI Providers",
+        icon: <KeyIcon />,
+        tint: "green",
+        keywords: [
+          "api key",
+          "key",
+          "gemini",
+          "groq",
+          "deepgram",
+          "deepseek",
+          "anthropic",
+          "claude",
+          "openai",
+          "endpoint",
+        ],
+      },
+      {
+        id: "shortcuts",
+        label: "Shortcuts",
+        icon: <KeyboardIcon />,
+        tint: "pink",
+        keywords: ["hotkey", "keyboard", "keys"],
+      },
+      {
+        id: "storage",
+        label: "Storage",
+        icon: <FolderIcon />,
+        tint: "gray",
+        keywords: ["files", "disk", "space", "recordings", "logs", "exports", "folder"],
+      },
+      {
+        id: "privacy",
+        label: "Privacy",
+        icon: <HandIcon />,
+        tint: "blue",
+        keywords: ["consent", "data", "analytics", "local"],
       },
     ],
   },
   {
-    items: [{ id: "about", label: "About", icon: <InfoIcon />, title: "About Audis" }],
+    items: [
+      {
+        id: "about",
+        label: "About Audis",
+        icon: <InfoIcon />,
+        tint: "gray",
+        keywords: ["version", "update", "diagnostics", "logs", "webview", "release", "beta"],
+      },
+    ],
   },
 ];
 
@@ -101,3 +191,29 @@ const ALL_ITEMS = NAV_GROUPS.flatMap((group) => group.items);
 export function findNavItem(id: ViewId): NavItem | undefined {
   return ALL_ITEMS.find((item) => item.id === id);
 }
+
+/** Every item whose name or keywords match `query`, best match first. */
+export function searchNav(query: string): NavItem[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return ALL_ITEMS;
+
+  const scored = ALL_ITEMS.map((item) => {
+    const label = item.label.toLowerCase();
+    const score = label.startsWith(needle)
+      ? 3
+      : label.includes(needle)
+        ? 2
+        : item.keywords.some((keyword) => keyword.includes(needle))
+          ? 1
+          : 0;
+    return { item, score };
+  });
+
+  return scored
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map((entry) => entry.item);
+}
+
+/** Navigate to a page, and optionally to a group on it by its anchor id. */
+export type Navigate = (id: ViewId, anchor?: string) => void;

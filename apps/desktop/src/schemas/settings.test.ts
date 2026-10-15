@@ -9,7 +9,7 @@ describe("settings round-trip", () => {
     version: 1,
     general: {
       theme: "dark",
-      startPage: "sessions",
+      startPage: "library",
       closeBehavior: "quit",
       showTrayIcon: false,
     },

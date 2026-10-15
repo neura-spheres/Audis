@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 
 import { GroupedList, Row } from "@/components/GroupedList";
+import { Page } from "@/components/Page";
 import { Button } from "@/components/controls";
+import { FilesView } from "@/features/files/FilesView";
 import { getDiagnostics, revealDataFile } from "@/services/ipc";
 import type { Diagnostics } from "@/schemas/ipc";
 import { formatBytes } from "@/lib/format";
 
-/** Where Audis keeps things and how much space it uses. */
+/** Where Audis keeps things, how much space it uses, and every file in it. */
 export function StorageView() {
   const [diagnostics, setDiagnostics] = useState<Diagnostics>();
 
@@ -21,11 +23,11 @@ export function StorageView() {
   }, []);
 
   return (
-    <div className="flex flex-col gap-8">
-      <GroupedList
-        title="On this PC"
-        footnote="Everything Audis records stays on this computer unless you choose a cloud engine."
-      >
+    <Page
+      title="Storage"
+      subtitle="Everything Audis records stays on this computer unless you choose a cloud engine."
+    >
+      <GroupedList title="On this PC">
         <Row
           label="Space used"
           value={diagnostics ? formatBytes(diagnostics.storageBytes) : "Measuring…"}
@@ -57,14 +59,15 @@ export function StorageView() {
 
       <GroupedList
         title="Retention"
-        footnote="Automatic cleanup arrives with recording. Until then, nothing is being written that needs a retention rule."
+        footnote="Automatic cleanup is not built yet. Delete sessions you no longer need from Library."
       >
         <Row
           label="Audio and transcripts"
-          description="Not available yet."
           value={<span style={{ color: "var(--label-tertiary)" }}>Keep everything</span>}
         />
       </GroupedList>
-    </div>
+
+      <FilesView />
+    </Page>
   );
 }

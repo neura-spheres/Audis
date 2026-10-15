@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { ErrorNotice } from "@/components/ErrorNotice";
+import { GroupedList, Row } from "@/components/GroupedList";
 import { Button } from "@/components/controls";
 import { ExternalIcon, RevealIcon } from "@/components/icons";
 import { listDataFiles, openDataFile, revealDataFile, AudisIpcError } from "@/services/ipc";
@@ -42,13 +43,13 @@ export function FilesView() {
     <div className="flex flex-col gap-6">
       {error ? <ErrorNotice error={error} /> : null}
 
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <span className="text-subheadline font-medium">
-            {listing ? `${listing.totalFiles} files` : "Reading files…"}
-          </span>
+      <div className="flex items-center justify-between gap-4 px-1">
+        <div className="flex min-w-0 flex-col">
+          <h2 className="text-title3 font-semibold">Files</h2>
           <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
-            {listing ? `${formatBytes(listing.totalBytes)} on this PC` : " "}
+            {listing
+              ? `${listing.totalFiles} files · ${formatBytes(listing.totalBytes)} on this PC`
+              : "Reading files…"}
           </span>
         </div>
         <Button onClick={refresh} disabled={loading}>
@@ -65,7 +66,7 @@ export function FilesView() {
             boxShadow: "var(--shadow-card)",
           }}
         >
-          <h2 className="text-body font-semibold">No files yet</h2>
+          <h3 className="text-body font-semibold">No files yet</h3>
           <p className="max-w-[420px] text-subheadline" style={{ color: "var(--label-secondary)" }}>
             Recordings, transcripts and exports will appear here once you run a session. Audis has
             created the folders below and is ready for them.
@@ -74,68 +75,32 @@ export function FilesView() {
       ) : null}
 
       {populated.map((group) => (
-        <section key={group.category} className="flex flex-col">
-          <div className="mb-2 flex items-baseline justify-between gap-3 px-3">
-            <h2 className="text-footnote font-medium" style={{ color: "var(--label-secondary)" }}>
-              {group.label}
-            </h2>
-            <span className="text-caption1" style={{ color: "var(--label-tertiary)" }}>
-              {group.files.length} · {formatBytes(group.totalBytes)}
-            </span>
-          </div>
-
-          <div
-            className="overflow-hidden"
-            style={{
-              background: "var(--surface-content)",
-              borderRadius: "var(--radius-card)",
-              boxShadow: "var(--shadow-card)",
-            }}
-          >
-            {group.files.map((file) => (
-              <FileRow
-                key={file.path}
-                file={file}
-                onOpen={() => act(openDataFile, file.path)}
-                onReveal={() => act(revealDataFile, file.path)}
-              />
-            ))}
-          </div>
-        </section>
+        <GroupedList
+          key={group.category}
+          title={group.label}
+          accessory={`${group.files.length} · ${formatBytes(group.totalBytes)}`}
+        >
+          {group.files.map((file) => (
+            <FileRow
+              key={file.path}
+              file={file}
+              onOpen={() => act(openDataFile, file.path)}
+              onReveal={() => act(revealDataFile, file.path)}
+            />
+          ))}
+        </GroupedList>
       ))}
 
       {empty.length > 0 ? (
-        <section className="flex flex-col">
-          <h2
-            className="mb-2 px-3 text-footnote font-medium"
-            style={{ color: "var(--label-secondary)" }}
-          >
-            Empty folders
-          </h2>
-          <div
-            className="overflow-hidden"
-            style={{
-              background: "var(--surface-content)",
-              borderRadius: "var(--radius-card)",
-              boxShadow: "var(--shadow-card)",
-            }}
-          >
-            {empty.map((group) => (
-              <div
-                key={group.category}
-                className="flex items-center justify-between gap-3 px-3 py-2.5 first:border-t-0"
-                style={{ borderTop: "0.5px solid var(--separator)" }}
-              >
-                <span className="text-subheadline" style={{ color: "var(--label-secondary)" }}>
-                  {group.label}
-                </span>
-                <span className="text-caption1" style={{ color: "var(--label-tertiary)" }}>
-                  Empty
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
+        <GroupedList title="Empty folders">
+          {empty.map((group) => (
+            <Row
+              key={group.category}
+              label={<span style={{ color: "var(--label-secondary)" }}>{group.label}</span>}
+              value={<span className="text-caption1">Empty</span>}
+            />
+          ))}
+        </GroupedList>
       ) : null}
     </div>
   );
@@ -151,10 +116,7 @@ function FileRow({
   onReveal: () => void;
 }) {
   return (
-    <div
-      className="group flex min-h-[52px] items-center gap-3 px-3 py-2 first:border-t-0"
-      style={{ borderTop: "0.5px solid var(--separator)" }}
-    >
+    <div className="audis-row flex min-h-[52px] items-center gap-3 px-3.5 py-2">
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate text-subheadline" title={file.name}>
           {file.name}

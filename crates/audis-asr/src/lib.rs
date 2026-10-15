@@ -8,6 +8,7 @@ pub mod cloud;
 pub mod diarize;
 pub mod engine;
 pub mod error;
+pub mod live;
 pub mod prepare;
 pub mod vad;
 
@@ -19,6 +20,7 @@ pub use cloud::{CloudEngine, ModelPurpose, fetch_models};
 pub use diarize::{DiarizeConfig, Diarizer, SpeakerAssignment, speaker_id, speaker_label};
 pub use engine::{AsrCapabilities, AsrEngine, AsrResult};
 pub use error::{AsrError, Result};
+pub use live::{LiveConfig, LiveEvent, LiveInput, LiveOutput};
 pub use prepare::{Resampler, TARGET_SAMPLE_RATE, downmix_to_mono, prepare};
 pub use vad::{EndpointConfig, EndpointEvent, Endpointer, Utterance};
 

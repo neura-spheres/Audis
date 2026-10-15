@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { AUDIS_EVENTS, subscribe } from "@/services/events";
 import { getSettings, updateSettings, AudisIpcError } from "@/services/ipc";
-import type { Settings, UserFacingError } from "@/schemas/ipc";
+import { settingsSchema, type Settings, type UserFacingError } from "@/schemas/ipc";
 import { applyTheme, resolveTheme } from "@/stores/theme";
 
 interface UseSettingsResult {
@@ -29,8 +30,17 @@ export function useSettings(): UseSettingsResult {
         if (active) setError(toUserFacing(cause));
       });
 
+    // Every copy of the settings follows the saved one. Home and a settings
+    // pane can both be editing the same value, and the tray and overlays change
+    // settings too; without this each would keep showing what it last loaded.
+    const stop = subscribe(AUDIS_EVENTS.settingsChanged, (payload) => {
+      const parsed = settingsSchema.safeParse(payload);
+      if (active && parsed.success) setSettings(parsed.data);
+    });
+
     return () => {
       active = false;
+      stop();
     };
   }, []);
 

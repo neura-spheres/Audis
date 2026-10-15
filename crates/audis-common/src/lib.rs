@@ -24,8 +24,8 @@ pub use language::Language;
 pub use models::{InstalledModel, ModelDownloadProgress, ModelId, ModelInfo};
 pub use paths::AppPaths;
 pub use providers::{
-    ChatApi, ChatSupport, ProviderConfig, ProviderId, ProviderInfo, ProviderStatus, SpeechApi,
-    SpeechSupport,
+    ChatApi, ChatSupport, GEMINI_BATCH_MODEL, GEMINI_LIVE_MODEL, ProviderConfig, ProviderId,
+    ProviderInfo, ProviderStatus, SpeechApi, SpeechSupport,
 };
 pub use session::{SessionMode, SessionState, SessionStatus};
 pub use settings::{

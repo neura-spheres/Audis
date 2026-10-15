@@ -1,48 +1,41 @@
 import { useEffect, useState } from "react";
 
 import { GroupedList, Row } from "@/components/GroupedList";
-import { ErrorNotice } from "@/components/ErrorNotice";
 import { Button } from "@/components/controls";
-import { getDiagnostics, revealDataFile, AudisIpcError } from "@/services/ipc";
-import type { Diagnostics, UserFacingError } from "@/schemas/ipc";
+import { getDiagnostics, revealDataFile } from "@/services/ipc";
+import type { Diagnostics } from "@/schemas/ipc";
 import { formatBytes } from "@/lib/format";
 
 /** Real environment information, read from the Rust core on mount. */
-export function DiagnosticsView() {
+export function DiagnosticsSection() {
   const [diagnostics, setDiagnostics] = useState<Diagnostics>();
-  const [error, setError] = useState<UserFacingError>();
 
+  // Secondary information on About: if it cannot be read, the rows say
+  // "Unknown" rather than putting a second error on a page that has a primary
+  // purpose of its own.
   useEffect(() => {
     let active = true;
     getDiagnostics()
       .then((result) => active && setDiagnostics(result))
-      .catch((cause: unknown) => {
-        if (active) setError(cause instanceof AudisIpcError ? cause.userFacing : undefined);
-      });
+      .catch(() => undefined);
     return () => {
       active = false;
     };
   }, []);
 
-  if (error) return <ErrorNotice error={error} />;
-
   const unknown = "Unknown";
 
   return (
-    <div className="flex flex-col gap-8">
-      <GroupedList title="Application">
-        <Row label="Version" value={diagnostics?.appVersion ?? unknown} />
+    <div className="flex flex-col gap-7">
+      <GroupedList title="This PC">
+        <Row label="Operating system" value={diagnostics?.os ?? unknown} />
+        <Row label="Architecture" value={diagnostics?.arch ?? unknown} />
         <Row label="Tauri" value={diagnostics?.tauriVersion ?? unknown} />
         <Row label="WebView2" value={diagnostics?.webviewVersion ?? unknown} />
       </GroupedList>
 
-      <GroupedList title="System">
-        <Row label="Operating system" value={diagnostics?.os ?? unknown} />
-        <Row label="Architecture" value={diagnostics?.arch ?? unknown} />
-      </GroupedList>
-
       <GroupedList
-        title="Storage"
+        title="Diagnostics"
         footnote="Logs never contain transcript text, audio, or API keys."
       >
         <Row

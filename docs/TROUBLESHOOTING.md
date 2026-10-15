@@ -29,6 +29,25 @@ that.
 You are on Vite 8. Audis targets Vite 7 for now; run `pnpm install` after
 confirming `apps/desktop/package.json` pins `vite` to `7.x`.
 
+**`whisper-rs-sys` fails: "Generator Ninja does not support instance specification".**
+A build ran once without `scripts/env.ps1`, so CMake configured whisper.cpp with
+the Visual Studio generator and cached it; every later build with the right
+environment (Ninja) trips over that cache. Delete the stale build output and
+build through the scripts, which load the environment:
+`Remove-Item -Recurse -Force target\debug\build\whisper-rs-sys-*` (or
+`target\release\...`), then `./scripts/dev.ps1` or `./scripts/build.ps1`.
+
+**A script fails to parse in Windows PowerShell ("The string is missing the terminator").**
+A `.ps1` file containing non-ASCII characters (✓, →) was saved as UTF-8 without
+a byte-order mark. Windows PowerShell 5.1 reads such files as Windows-1252, and
+part of ✓ becomes a curly quote. Save scripts as UTF-8 with BOM.
+
+**`./scripts/build.ps1 -Bundle` and the update signing key.**
+Without `TAURI_SIGNING_PRIVATE_KEY` the script still builds both installers,
+which install normally; it only leaves out the signed update package that a
+GitHub release serves. Set the key (see `docs/releasing.md`) when building
+something to publish.
+
 **The app window is blank or does not open.**
 Ensure the WebView2 Runtime is installed (evergreen; preinstalled on Windows
 11). Check `%LOCALAPPDATA%\NeuraAudis\Audis\logs\audis.log`.

@@ -1,4 +1,6 @@
 import { ErrorNotice } from "@/components/ErrorNotice";
+import { GroupedList, Row } from "@/components/GroupedList";
+import { Page } from "@/components/Page";
 import { SegmentedControl, Switch } from "@/components/controls";
 import { useSettings } from "@/hooks/useSettings";
 import type { CaptionSettings } from "@/schemas/ipc";
@@ -16,85 +18,99 @@ export function CaptionsView() {
     update((current) => ({ ...current, captions: { ...current.captions, ...change } }));
 
   return (
-    <div className="flex flex-col gap-5">
+    <Page
+      title="Captions"
+      subtitle="How the words look over your other windows while a session runs."
+    >
       <CaptionPreview captions={captions} />
 
-      <section className="flex flex-col gap-3">
+      <GroupedList title="Appearance">
         <Row
           label="Background"
-          help="A panel behind the words. Turn it off to see everything underneath; captions keep a dark outline so they stay readable."
-        >
-          <div className="flex items-center gap-3">
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={5}
-              value={captions.backgroundOpacity}
-              onChange={(event) => set({ backgroundOpacity: Number(event.target.value) })}
-              aria-label="Background opacity"
-              className="w-40"
+          description="Off shows everything underneath; words keep a dark outline so they stay readable."
+          value={
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                value={captions.backgroundOpacity}
+                onChange={(event) => set({ backgroundOpacity: Number(event.target.value) })}
+                aria-label="Background opacity"
+                className="w-36"
+                style={{ accentColor: "var(--color-accent)" }}
+              />
+              <span
+                className="w-10 shrink-0 text-right text-footnote tabular-nums"
+                style={{ color: "var(--label-secondary)" }}
+              >
+                {captions.backgroundOpacity === 0 ? "Off" : `${captions.backgroundOpacity}%`}
+              </span>
+            </div>
+          }
+        />
+        <Row
+          label="Text size"
+          description="Bigger reads better from across a room."
+          value={
+            <SegmentedControl<string>
+              label="Caption text size"
+              value={sizeName(captions.fontSize)}
+              options={[
+                { id: "Small", label: "Small" },
+                { id: "Medium", label: "Medium" },
+                { id: "Large", label: "Large" },
+                { id: "Huge", label: "Huge" },
+              ]}
+              onChange={(name) => set({ fontSize: SIZES[name] ?? 22 })}
             />
-            <span
-              className="w-14 shrink-0 text-right text-footnote tabular-nums"
-              style={{ color: "var(--label-secondary)" }}
-            >
-              {captions.backgroundOpacity === 0 ? "Off" : `${captions.backgroundOpacity}%`}
-            </span>
-          </div>
-        </Row>
+          }
+        />
+        <Row
+          label="Lines on screen"
+          description="How much of the conversation stays visible."
+          value={
+            <SegmentedControl<string>
+              label="Lines on screen"
+              value={String(captions.maxLines)}
+              options={[
+                { id: "1", label: "1" },
+                { id: "2", label: "2" },
+                { id: "3", label: "3" },
+                { id: "5", label: "5" },
+              ]}
+              onChange={(lines) => set({ maxLines: Number(lines) })}
+            />
+          }
+        />
+      </GroupedList>
 
-        <Row label="Text size" help="Bigger text is easier to read from across a room.">
-          <SegmentedControl<string>
-            label="Caption text size"
-            value={sizeName(captions.fontSize)}
-            options={[
-              { id: "Small", label: "Small" },
-              { id: "Medium", label: "Medium" },
-              { id: "Large", label: "Large" },
-              { id: "Huge", label: "Huge" },
-            ]}
-            onChange={(name) => set({ fontSize: SIZES[name] ?? 22 })}
-          />
-        </Row>
-
-        <Row label="Lines on screen" help="How much of the conversation stays visible.">
-          <SegmentedControl<string>
-            label="Lines on screen"
-            value={String(captions.maxLines)}
-            options={[
-              { id: "1", label: "1" },
-              { id: "2", label: "2" },
-              { id: "3", label: "3" },
-              { id: "5", label: "5" },
-            ]}
-            onChange={(lines) => set({ maxLines: Number(lines) })}
-          />
-        </Row>
-
+      <GroupedList title="Behaviour">
         <Row
           label="Show who is speaking"
-          help="A small label and a coloured dot: green for you, blue for your computer's audio."
-        >
-          <Switch
-            label="Show who is speaking"
-            checked={captions.showSourceLabels}
-            onChange={(showSourceLabels) => set({ showSourceLabels })}
-          />
-        </Row>
-
+          description="A small label and dot: green for you, blue for your computer's audio."
+          value={
+            <Switch
+              label="Show who is speaking"
+              checked={captions.showSourceLabels}
+              onChange={(showSourceLabels) => set({ showSourceLabels })}
+            />
+          }
+        />
         <Row
           label="Click through captions"
-          help="Captions ignore the mouse so clicks reach whatever is behind them; a small handle above them stays available to bring them back. When off, the captions light up and become draggable only while you point at them."
-        >
-          <Switch
-            label="Click through captions"
-            checked={captions.clickThrough}
-            onChange={(clickThrough) => set({ clickThrough })}
-          />
-        </Row>
-      </section>
-    </div>
+          description="Clicks pass through to whatever is behind; a small handle above stays available to bring them back. Off makes captions draggable while you point at them."
+          value={
+            <Switch
+              label="Click through captions"
+              checked={captions.clickThrough}
+              onChange={(clickThrough) => set({ clickThrough })}
+            />
+          }
+        />
+      </GroupedList>
+    </Page>
   );
 }
 
@@ -107,7 +123,8 @@ function CaptionPreview({ captions }: { captions: CaptionSettings }) {
     <div
       className="flex items-center justify-center overflow-hidden p-6"
       style={{
-        borderRadius: "var(--radius-card)",
+        borderRadius: "var(--radius-tile)",
+        boxShadow: "var(--shadow-card)",
         background:
           "repeating-conic-gradient(#3a3f47 0% 25%, #22262c 0% 50%) 50% / 24px 24px, linear-gradient(120deg, #1f6feb33, #d2a8ff33)",
         minHeight: 130,
@@ -116,6 +133,8 @@ function CaptionPreview({ captions }: { captions: CaptionSettings }) {
       <div
         className="flex w-full flex-col gap-2"
         style={{
+          transition:
+            "background-color var(--duration-standard) var(--ease-standard), padding var(--spring-smooth-duration) var(--spring-smooth)",
           padding: hasPanel ? "10px 16px" : "4px 8px",
           borderRadius: 16,
           background: hasPanel ? `rgba(14, 15, 17, ${opacity})` : "transparent",
@@ -128,6 +147,7 @@ function CaptionPreview({ captions }: { captions: CaptionSettings }) {
         <p
           className="flex items-baseline gap-2.5 leading-[1.35]"
           style={{
+            transition: "font-size var(--spring-smooth-duration) var(--spring-smooth)",
             fontSize: Math.min(captions.fontSize, 30),
             fontWeight: 600,
             color: "#ffffff",
@@ -175,34 +195,5 @@ function sizeName(fontSize: number): string {
     Object.entries(SIZES).sort(
       ([, a], [, b]) => Math.abs(a - fontSize) - Math.abs(b - fontSize),
     )[0]?.[0] ?? "Medium"
-  );
-}
-
-function Row({
-  label,
-  help,
-  children,
-}: {
-  label: string;
-  help: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className="flex items-center justify-between gap-4 p-3"
-      style={{
-        background: "var(--surface-content)",
-        borderRadius: "var(--radius-card)",
-        boxShadow: "var(--shadow-card)",
-      }}
-    >
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-subheadline">{label}</span>
-        <span className="text-footnote" style={{ color: "var(--label-secondary)" }}>
-          {help}
-        </span>
-      </div>
-      <div className="shrink-0">{children}</div>
-    </div>
   );
 }
