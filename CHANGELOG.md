@@ -4,6 +4,29 @@ All notable changes to Audis are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Audis adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-10-15
+
+### Changed
+
+- Redesigned main window in the style of macOS System Settings. Home replaces
+  Quick Start, Dashboard and Features: one-click feature tiles, a live session
+  card with a running clock and the latest transcript lines, quick settings, a
+  setup checklist and recent sessions. Library groups saved sessions by day.
+  Settings are fewer, clearer panes (Speech Recognition now holds the engine,
+  language, models and speaker separation), with search, a sidebar mini player
+  and spring-based animation that respects Reduce Motion.
+- Speech recognition now holds to the language you pick instead of switching
+  languages mid-sentence: Gemini Live is told the spoken language, Whisper is
+  primed in it, and Gemini writes ambiguous words as the nearest word in it.
+- Model lists updated to each provider's current models.
+
+### Fixed
+
+- Assistant replies from current Claude models were empty.
+- Deleting a session now asks for confirmation; exports confirm where the file went.
+- Build scripts work in Windows PowerShell 5.1, and installers can be built
+  without the update-signing key.
+
 ## [0.1.3] - 2026-07-19
 
 ### Fixed
